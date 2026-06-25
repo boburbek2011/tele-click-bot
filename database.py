@@ -6,7 +6,7 @@ DB_PATH = "tele_click.db"
 
 async def init_db():
     async with aiosqlite.connect(DB_PATH) as db:
-        # Users table - yangi ustunlar qo'shildi
+        # Users table
         await db.execute('''
             CREATE TABLE IF NOT EXISTS users (
                 user_id INTEGER PRIMARY KEY,
@@ -62,7 +62,7 @@ async def init_db():
             )
         ''')
         
-        # Skins table - multiplier qo'shildi
+        # Skins table
         await db.execute('''
             CREATE TABLE IF NOT EXISTS skins (
                 id INTEGER PRIMARY KEY AUTOINCREMENT,
@@ -175,32 +175,27 @@ async def init_shop_items():
                 return
         
         items = [
-            # Energiya kuchaytirgichlar
             ('Energiya +500', 'Maksimal energiyani 500 ga oshiradi', 'energy', 500, 1, 'max_energy', 500, '⚡'),
             ('Energiya +1000', 'Maksimal energiyani 1000 ga oshiradi', 'energy', 1500, 3, 'max_energy', 1000, '⚡'),
             ('Energiya +2000', 'Maksimal energiyani 2000 ga oshiradi', 'energy', 4000, 5, 'max_energy', 2000, '⚡'),
             ('Energiya +5000', 'Maksimal energiyani 5000 ga oshiradi', 'energy', 10000, 10, 'max_energy', 5000, '⚡'),
             
-            # Click power
             ('Click Kuch +1', 'Har bir bosishda +1 qo\'shimcha', 'click', 300, 1, 'click_power', 1, '💪'),
             ('Click Kuch +2', 'Har bir bosishda +2 qo\'shimcha', 'click', 1000, 3, 'click_power', 2, '💪'),
             ('Click Kuch +5', 'Har bir bosishda +5 qo\'shimcha', 'click', 3000, 5, 'click_power', 5, '💪'),
             ('Click Kuch +10', 'Har bir bosishda +10 qo\'shimcha', 'click', 8000, 8, 'click_power', 10, '💪'),
             ('Click Kuch +20', 'Har bir bosishda +20 qo\'shimcha', 'click', 20000, 12, 'click_power', 20, '💪'),
             
-            # Auto Clicker (avto bosish)
             ('Auto Clicker Lv.1', 'Har 10 soniyada 1 ta avto bosish', 'auto', 2000, 2, 'auto_clicker', 1, '🤖'),
             ('Auto Clicker Lv.2', 'Har 10 soniyada 2 ta avto bosish', 'auto', 5000, 4, 'auto_clicker', 2, '🤖'),
             ('Auto Clicker Lv.3', 'Har 10 soniyada 3 ta avto bosish', 'auto', 10000, 6, 'auto_clicker', 3, '🤖'),
             ('Auto Clicker Lv.4', 'Har 10 soniyada 5 ta avto bosish', 'auto', 20000, 8, 'auto_clicker', 5, '🤖'),
             ('Auto Clicker Lv.5', 'Har 10 soniyada 10 ta avto bosish', 'auto', 50000, 12, 'auto_clicker', 10, '🤖'),
             
-            # Offline mining
             ('Offline Mining', 'Offline mining yoqish (1 soat)', 'offline', 2000, 2, 'offline_mining', 1, '⛏️'),
             ('Offline Mining Pro', 'Offline mining yoqish (3 soat)', 'offline', 5000, 4, 'offline_mining', 3, '⛏️'),
             ('Offline Mining Elite', 'Offline mining yoqish (6 soat)', 'offline', 12000, 7, 'offline_mining', 6, '⛏️'),
             
-            # Multipliers
             ('2x Multiplier', '30 daqiqa davomida 2x ko\'p', 'multiplier', 1000, 2, 'multiplier', 2, '🌟'),
             ('3x Multiplier', '30 daqiqa davomida 3x ko\'p', 'multiplier', 3000, 4, 'multiplier', 3, '🌟'),
             ('5x Multiplier', '30 daqiqa davomida 5x ko\'p', 'multiplier', 8000, 6, 'multiplier', 5, '🌟'),
@@ -225,28 +220,24 @@ async def init_skins():
                 return
         
         skins = [
-            # Common skins (1-5 level) - multiplier: 1x
             ('Yangi o\'yinchi', '🟢', 'common', 1, 0, 1),
             ('Tajribali', '🔵', 'common', 2, 500, 1),
             ('Usta', '🟣', 'common', 3, 1000, 1),
             ('Jangchi', '🔴', 'common', 4, 2000, 1),
             ('Qahramon', '🟠', 'common', 5, 3000, 1),
             
-            # Rare skins (5-10 level) - multiplier: 2x
             ('Legend', '🟡', 'rare', 6, 5000, 2),
             ('Epic Warrior', '🟣', 'rare', 7, 8000, 2),
             ('Dragon Slayer', '🐉', 'rare', 8, 12000, 2),
             ('Phoenix', '🔥', 'rare', 9, 18000, 2),
             ('Shadow', '🌑', 'rare', 10, 25000, 2),
             
-            # Epic skins (10-15 level) - multiplier: 4x
             ('Star Lord', '⭐', 'epic', 11, 40000, 4),
             ('God of War', '⚔️', 'epic', 12, 60000, 4),
             ('Angel', '👼', 'epic', 13, 80000, 4),
             ('Demon', '👿', 'epic', 14, 100000, 4),
             ('Dragon King', '🐲', 'epic', 15, 120000, 4),
             
-            # Legendary skins (15-20 level) - multiplier: 10x
             ('Legendary Hero', '🌟', 'legendary', 16, 200000, 10),
             ('God of Click', '👑', 'legendary', 18, 350000, 10),
             ('Immortal', '✨', 'legendary', 20, 500000, 10),
@@ -324,14 +315,14 @@ async def refill_energy(user_id):
         return
     
     now = datetime.now()
-    last_refill = user[13]
+    last_refill = user[16]
     
     if last_refill:
         try:
             last_time = datetime.fromisoformat(last_refill)
             diff = (now - last_time).total_seconds() / 60
             
-            if diff >= 5:  # Har 5 daqiqada 20%
+            if diff >= 5:
                 max_energy = user[12]
                 current_energy = user[11]
                 refill_amount = int(max_energy * 0.2)
@@ -390,28 +381,25 @@ async def purchase_item(user_id, item_id):
         await db.commit()
 
 async def get_required_exp(level):
-    """Darajaga qarab EXP talabi"""
     if level <= 5:
-        return level * 100  # 1-5: 100, 200, 300, 400, 500
+        return level * 100
     elif level <= 10:
-        return level * 200  # 5-10: 1200, 1400, 1600, 1800, 2000
+        return level * 200
     elif level <= 15:
-        return level * 300  # 10-15: 3300, 3600, 3900, 4200, 4500
+        return level * 300
     elif level <= 20:
-        return level * 500  # 15-20: 8000, 8500, 9000, 9500, 10000
+        return level * 500
     else:
-        return level * 800  # 20+: 16800, 17600, ...
+        return level * 800
 
 async def get_user_total_multiplier(user_id):
-    """Foydalanuvchining jami multiplierini hisoblash"""
     user = await get_user(user_id)
     if not user:
         return 1
     
     total_multiplier = 1
     
-    # Skin multiplier
-    if user[18] and user[18] > 0:  # active_skin_id
+    if user[18] and user[18] > 0:
         async with aiosqlite.connect(DB_PATH) as db:
             async with db.execute(
                 "SELECT multiplier FROM skins WHERE id = ?",
@@ -421,8 +409,49 @@ async def get_user_total_multiplier(user_id):
                 if skin:
                     total_multiplier *= skin[0]
     
-    # Multiplier from shop items
-    if user[20] and user[20] > 1:  # multiplier
-        total_multiplier *= user[20]
+    if user[19] and user[19] > 1:
+        total_multiplier *= user[19]
     
     return total_multiplier
+
+# ==================== LEADERBOARD FUNCTIONS ====================
+
+async def get_leaderboard_current(limit=10):
+    async with aiosqlite.connect(DB_PATH) as db:
+        async with db.execute(
+            """SELECT user_id, username, first_name, coins, level, total_clicks 
+               FROM users 
+               ORDER BY coins DESC 
+               LIMIT ?""",
+            (limit,)
+        ) as cursor:
+            return await cursor.fetchall()
+
+async def get_leaderboard_total(limit=10):
+    async with aiosqlite.connect(DB_PATH) as db:
+        async with db.execute(
+            """SELECT user_id, username, first_name, total_clicks, coins, level 
+               FROM users 
+               ORDER BY total_clicks DESC 
+               LIMIT ?""",
+            (limit,)
+        ) as cursor:
+            return await cursor.fetchall()
+
+async def get_user_rank_current(user_id):
+    async with aiosqlite.connect(DB_PATH) as db:
+        async with db.execute(
+            "SELECT COUNT(*) + 1 FROM users WHERE coins > (SELECT coins FROM users WHERE user_id = ?)",
+            (user_id,)
+        ) as cursor:
+            rank = await cursor.fetchone()
+            return rank[0] if rank else None
+
+async def get_user_rank_total(user_id):
+    async with aiosqlite.connect(DB_PATH) as db:
+        async with db.execute(
+            "SELECT COUNT(*) + 1 FROM users WHERE total_clicks > (SELECT total_clicks FROM users WHERE user_id = ?)",
+            (user_id,)
+        ) as cursor:
+            rank = await cursor.fetchone()
+            return rank[0] if rank else None
