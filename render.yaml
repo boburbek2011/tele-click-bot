@@ -1,0 +1,13 @@
+services:
+  - type: web
+    name: tele-click-bot
+    env: python
+    plan: free
+    buildCommand: |
+      pip install -r requirements.txt
+    startCommand: python bot.py
+    envVars:
+      - key: WEBAPP_URL
+        value: https://tele-click-bot.onrender.com
+      - key: PYTHON_VERSION
+        value: 3.11.0
