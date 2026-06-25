@@ -17,7 +17,143 @@ body {
     margin: 0 auto;
     padding: 16px;
 }
+/* ==================== ADMIN ==================== */
+.admin-tab {
+    color: #ff4444 !important;
+}
+.admin-tab.active {
+    background: #ff4444 !important;
+    color: #0a0a0a !important;
+}
 
+.admin-search {
+    display: flex;
+    gap: 6px;
+    margin-bottom: 12px;
+}
+
+.admin-search input {
+    flex: 1;
+    padding: 10px;
+    border: none;
+    border-radius: 8px;
+    background: #1a1a1a;
+    color: #fff;
+    outline: none;
+    font-size: 13px;
+}
+
+.admin-search input::placeholder {
+    color: #666;
+}
+
+.admin-search button {
+    padding: 10px 16px;
+    border: none;
+    border-radius: 8px;
+    background: #ff4444;
+    color: #fff;
+    font-weight: bold;
+    cursor: pointer;
+}
+
+.admin-user-list {
+    background: #1a1a1a;
+    border-radius: 12px;
+    padding: 8px;
+    max-height: 400px;
+    overflow-y: auto;
+    margin-bottom: 12px;
+}
+
+.admin-user-list::-webkit-scrollbar {
+    width: 4px;
+}
+
+.admin-user-list::-webkit-scrollbar-track {
+    background: #1a1a1a;
+}
+
+.admin-user-list::-webkit-scrollbar-thumb {
+    background: #ff4444;
+    border-radius: 2px;
+}
+
+.admin-user-item {
+    display: flex;
+    align-items: center;
+    padding: 10px;
+    border-bottom: 1px solid #2a2a2a;
+    gap: 10px;
+    flex-wrap: wrap;
+}
+
+.admin-user-item:last-child {
+    border-bottom: none;
+}
+
+.admin-user-info {
+    flex: 1;
+    min-width: 120px;
+}
+
+.admin-user-name {
+    font-weight: bold;
+    font-size: 13px;
+}
+
+.admin-user-details {
+    font-size: 10px;
+    color: #888;
+}
+
+.admin-user-actions {
+    display: flex;
+    gap: 4px;
+    flex-wrap: wrap;
+}
+
+.admin-user-actions button {
+    padding: 4px 10px;
+    border: none;
+    border-radius: 6px;
+    font-size: 10px;
+    cursor: pointer;
+    font-weight: bold;
+}
+
+.admin-user-actions .btn-coins {
+    background: #00ff88;
+    color: #0a0a0a;
+}
+
+.admin-user-actions .btn-exp {
+    background: #4488ff;
+    color: #fff;
+}
+
+.admin-user-actions .btn-energy {
+    background: #ffaa00;
+    color: #0a0a0a;
+}
+
+.admin-actions {
+    display: flex;
+    gap: 6px;
+}
+
+.admin-actions .action-btn {
+    flex: 1;
+    padding: 10px;
+    font-size: 12px;
+    margin-bottom: 0;
+    background: #ff4444;
+    color: #fff;
+}
+
+.admin-actions .action-btn:hover {
+    opacity: 0.8;
+}
 /* ==================== HEADER ==================== */
 header {
     display: flex;
