@@ -18,7 +18,8 @@ from config import BOT_TOKEN, ADMIN_IDS, WEBAPP_URL, DB_PATH
 from database import (
     init_db, get_user, create_user, update_user_stats, 
     refill_energy, get_shop_items, get_skins, get_user_skins, 
-    purchase_item, get_required_exp, get_user_total_multiplier
+    purchase_item, get_required_exp, get_user_total_multiplier,
+    get_leaderboard_current, get_leaderboard_total, get_user_rank_current, get_user_rank_total
 )
 
 logging.basicConfig(
@@ -33,7 +34,7 @@ dp = Dispatcher()
 routes = web.RouteTableDef()
 ws_clients = set()
 
-# ==================== WEB APP ROUTES ====================
+# ==================== STATIC FILES ====================
 
 @routes.get('/')
 async def index(request):
@@ -47,11 +48,12 @@ async def style(request):
 async def script(request):
     return web.FileResponse('web_app/script.js')
 
-@routes.post('/api/user')
+# ==================== USER API ====================
+
+@routes.get('/api/user')
 async def get_user_data(request):
     try:
-        data = await request.json()
-        user_id = data.get('user_id')
+        user_id = request.query.get('user_id')
         if not user_id:
             return web.json_response({'error': 'No user_id'}, status=400)
         
@@ -80,8 +82,50 @@ async def get_user_data(request):
             })
         return web.json_response({'error': 'User not found'}, status=404)
     except Exception as e:
-        logging.error(f"Error in /api/user: {e}")
+        logging.error(f"Error in /api/user GET: {e}")
         return web.json_response({'error': str(e)}, status=500)
+
+@routes.post('/api/user')
+async def create_or_get_user(request):
+    try:
+        data = await request.json()
+        user_id = data.get('user_id')
+        if not user_id:
+            return web.json_response({'error': 'No user_id'}, status=400)
+        
+        user = await get_user(int(user_id))
+        if not user:
+            await create_user(int(user_id), "", "", "")
+            user = await get_user(int(user_id))
+        
+        if user:
+            return web.json_response({
+                'user_id': user[0],
+                'username': user[1],
+                'first_name': user[2],
+                'last_name': user[3],
+                'coins': user[4],
+                'exp': user[5],
+                'level': user[6],
+                'diamonds': user[7],
+                'title': user[8],
+                'color': user[9],
+                'total_clicks': user[10],
+                'energy': user[11],
+                'max_energy': user[12],
+                'click_power': user[13],
+                'offline_mining': user[14],
+                'mining_rate': user[15],
+                'auto_clicker_level': user[17],
+                'active_skin_id': user[18],
+                'multiplier': user[19]
+            })
+        return web.json_response({'error': 'User not found'}, status=404)
+    except Exception as e:
+        logging.error(f"Error in /api/user POST: {e}")
+        return web.json_response({'error': str(e)}, status=500)
+
+# ==================== CLICK API ====================
 
 @routes.post('/api/click')
 async def handle_click(request):
@@ -92,34 +136,23 @@ async def handle_click(request):
         if not user_id:
             return web.json_response({'error': 'No user_id'}, status=400)
         
+        await refill_energy(int(user_id))
+        
         user = await get_user(int(user_id))
         if not user:
             return web.json_response({'error': 'User not found'}, status=404)
         
-        # Energiyani to'ldirish
-        await refill_energy(int(user_id))
-        user = await get_user(int(user_id))
-        
-        # Energiyani tekshirish
         if user[11] <= 0:
             return web.json_response({
                 'success': False,
                 'error': 'Energiya tugadi! Kuting yoki shopdan sotib oling.'
             }, status=400)
         
-        # Click power
         click_power = user[13] or 1
-        
-        # Total multiplier
         total_multiplier = await get_user_total_multiplier(int(user_id))
-        
-        # EXP (10-20 oralig'ida)
         exp_gain = random.randint(10, 20)
-        
-        # Coins: click_power * multiplier
         coins_gain = click_power * total_multiplier
         
-        # Energiyani kamaytirish
         await update_user_stats(
             int(user_id), 
             coins_delta=coins_gain, 
@@ -128,7 +161,6 @@ async def handle_click(request):
             energy_delta=-1
         )
         
-        # Level up tekshirish
         user = await get_user(int(user_id))
         level = user[6]
         exp = user[5]
@@ -143,14 +175,10 @@ async def handle_click(request):
         
         if leveled_up:
             await update_user_stats(int(user_id), level_update=level)
-            # Level up notification (Telegramga)
             try:
                 await bot.send_message(
                     int(user_id),
-                    f"🎉 **DARAJANGIZ OSHDI!**\n\n"
-                    f"📊 Yangi daraja: **{level}**\n"
-                    f"⭐ EXP: {exp}\n"
-                    f"🪙 Tangalar: {user[4] + coins_gain}",
+                    f"🎉 **DARAJANGIZ OSHDI!**\n\n📊 Yangi daraja: **{level}**",
                     parse_mode="Markdown"
                 )
             except:
@@ -174,6 +202,8 @@ async def handle_click(request):
     except Exception as e:
         logging.error(f"Error in /api/click: {e}")
         return web.json_response({'error': str(e)}, status=500)
+
+# ==================== TITLE API ====================
 
 @routes.post('/api/title')
 async def change_title(request):
@@ -199,6 +229,8 @@ async def change_title(request):
     except Exception as e:
         logging.error(f"Error in /api/title: {e}")
         return web.json_response({'error': str(e)}, status=500)
+
+# ==================== DIAMOND API ====================
 
 @routes.post('/api/diamond')
 async def buy_diamond(request):
@@ -232,6 +264,8 @@ async def buy_diamond(request):
         logging.error(f"Error in /api/diamond: {e}")
         return web.json_response({'error': str(e)}, status=500)
 
+# ==================== SEND COINS API ====================
+
 @routes.post('/api/send')
 async def send_coins(request):
     try:
@@ -262,6 +296,8 @@ async def send_coins(request):
     except Exception as e:
         logging.error(f"Error in /api/send: {e}")
         return web.json_response({'error': str(e)}, status=500)
+
+# ==================== PROMO API ====================
 
 @routes.post('/api/promo')
 async def redeem_promo(request):
@@ -353,7 +389,6 @@ async def buy_shop_item(request):
         if not user:
             return web.json_response({'error': 'User not found'}, status=404)
         
-        # Get item
         async with aiosqlite.connect(DB_PATH) as db:
             async with db.execute(
                 "SELECT * FROM shop_items WHERE id = ? AND is_available = 1",
@@ -364,19 +399,16 @@ async def buy_shop_item(request):
         if not item:
             return web.json_response({'error': 'Item not found'}, status=404)
         
-        # Check level requirement
         if user[6] < item[4]:
             return web.json_response({
                 'error': f'Bu narsa uchun {item[4]}-daraja kerak! Sizda: {user[6]}'
             }, status=400)
         
-        # Check price
         if user[4] < item[3]:
             return web.json_response({
                 'error': f'Yetarli tanga yo\'q! Kerak: {item[3]}, Sizda: {user[4]}'
             }, status=400)
         
-        # Apply effect
         effect_type = item[5]
         effect_value = item[6]
         
@@ -404,7 +436,6 @@ async def buy_shop_item(request):
                 await db.commit()
             await update_user_stats(int(user_id), coins_delta=-item[3])
         
-        # Add to inventory
         await purchase_item(int(user_id), int(item_id))
         
         updated_user = await get_user(int(user_id))
@@ -457,7 +488,6 @@ async def buy_skin(request):
         if not user:
             return web.json_response({'error': 'User not found'}, status=404)
         
-        # Get skin
         async with aiosqlite.connect(DB_PATH) as db:
             async with db.execute(
                 "SELECT * FROM skins WHERE id = ? AND is_available = 1",
@@ -468,19 +498,16 @@ async def buy_skin(request):
         if not skin:
             return web.json_response({'error': 'Skin not found'}, status=404)
         
-        # Check level requirement
         if user[6] < skin[3]:
             return web.json_response({
                 'error': f'Bu skin uchun {skin[3]}-daraja kerak! Sizda: {user[6]}'
             }, status=400)
         
-        # Check price
         if user[4] < skin[4]:
             return web.json_response({
                 'error': f'Yetarli tanga yo\'q! Kerak: {skin[4]}, Sizda: {user[4]}'
             }, status=400)
         
-        # Check if already has skin
         async with aiosqlite.connect(DB_PATH) as db:
             async with db.execute(
                 "SELECT * FROM user_skins WHERE user_id = ? AND skin_id = ?",
@@ -491,7 +518,6 @@ async def buy_skin(request):
         if existing:
             return web.json_response({'error': 'Sizda bu skin allaqachon bor!'}, status=400)
         
-        # Purchase skin
         async with aiosqlite.connect(DB_PATH) as db:
             await db.execute(
                 "INSERT INTO user_skins (user_id, skin_id) VALUES (?, ?)",
@@ -522,7 +548,6 @@ async def activate_skin(request):
         if not user_id or not skin_id:
             return web.json_response({'error': 'Missing data'}, status=400)
         
-        # Check if has skin
         async with aiosqlite.connect(DB_PATH) as db:
             async with db.execute(
                 "SELECT * FROM user_skins WHERE user_id = ? AND skin_id = ?",
@@ -533,20 +558,15 @@ async def activate_skin(request):
         if not skin:
             return web.json_response({'error': 'Sizda bu skin yo\'q!'}, status=400)
         
-        # Deactivate all skins
         async with aiosqlite.connect(DB_PATH) as db:
             await db.execute(
                 "UPDATE user_skins SET is_active = 0 WHERE user_id = ?",
                 (int(user_id),)
             )
-            
-            # Activate selected skin
             await db.execute(
                 "UPDATE user_skins SET is_active = 1 WHERE user_id = ? AND skin_id = ?",
                 (int(user_id), int(skin_id))
             )
-            
-            # Update user's active skin
             await db.execute(
                 "UPDATE users SET active_skin_id = ? WHERE user_id = ?",
                 (int(skin_id), int(user_id))
@@ -578,6 +598,78 @@ async def get_user_skins_api(request):
         return web.json_response(result)
     except Exception as e:
         logging.error(f"Error in /api/user/skins: {e}")
+        return web.json_response({'error': str(e)}, status=500)
+
+# ==================== LEADERBOARD API ====================
+
+@routes.get('/api/leaderboard/current')
+async def get_leaderboard_current_api(request):
+    try:
+        limit = request.query.get('limit', 10)
+        try:
+            limit = int(limit)
+        except:
+            limit = 10
+        
+        leaders = await get_leaderboard_current(limit)
+        result = []
+        for i, user in enumerate(leaders, 1):
+            name = user[1] or user[2] or f"ID:{user[0]}"
+            result.append({
+                'rank': i,
+                'user_id': user[0],
+                'name': name,
+                'coins': user[3],
+                'level': user[4],
+                'clicks': user[5]
+            })
+        return web.json_response(result)
+    except Exception as e:
+        logging.error(f"Error in /api/leaderboard/current: {e}")
+        return web.json_response({'error': str(e)}, status=500)
+
+@routes.get('/api/leaderboard/total')
+async def get_leaderboard_total_api(request):
+    try:
+        limit = request.query.get('limit', 10)
+        try:
+            limit = int(limit)
+        except:
+            limit = 10
+        
+        leaders = await get_leaderboard_total(limit)
+        result = []
+        for i, user in enumerate(leaders, 1):
+            name = user[1] or user[2] or f"ID:{user[0]}"
+            result.append({
+                'rank': i,
+                'user_id': user[0],
+                'name': name,
+                'total_clicks': user[3],
+                'coins': user[4],
+                'level': user[5]
+            })
+        return web.json_response(result)
+    except Exception as e:
+        logging.error(f"Error in /api/leaderboard/total: {e}")
+        return web.json_response({'error': str(e)}, status=500)
+
+@routes.get('/api/leaderboard/rank')
+async def get_user_rank_api(request):
+    try:
+        user_id = request.query.get('user_id')
+        if not user_id:
+            return web.json_response({'error': 'No user_id'}, status=400)
+        
+        current_rank = await get_user_rank_current(int(user_id))
+        total_rank = await get_user_rank_total(int(user_id))
+        
+        return web.json_response({
+            'current_rank': current_rank,
+            'total_rank': total_rank
+        })
+    except Exception as e:
+        logging.error(f"Error in /api/leaderboard/rank: {e}")
         return web.json_response({'error': str(e)}, status=500)
 
 # ==================== AUCTION API ====================
@@ -786,7 +878,8 @@ async def start_command(message: types.Message):
         "💎 Olmoslar\n"
         "🎁 Promokodlar\n"
         "🏪 Do'kon\n"
-        "🎨 Skinlar\n\n"
+        "🎨 Skinlar\n"
+        "🏆 Reyting\n\n"
         "🔽 Quyidagi tugmani bosing va o'yinni boshlang!",
         reply_markup=keyboard,
         parse_mode="Markdown"
@@ -996,14 +1089,11 @@ async def create_promo(message: types.Message):
 # ==================== MAIN ====================
 
 async def main():
-    # Initialize database
     await init_db()
     
-    # Create web_app directory if not exists
     if not os.path.exists('web_app'):
         os.makedirs('web_app')
     
-    # Start Web App server
     app = web.Application()
     app.add_routes(routes)
     runner = web.AppRunner(app)
@@ -1013,7 +1103,6 @@ async def main():
     
     logging.info("Web App server started on port 8080")
     
-    # Start bot
     await dp.start_polling(bot)
 
 if __name__ == '__main__':
