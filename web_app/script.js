@@ -32,15 +32,6 @@ function loadFromLocalStorage() {
     return null;
 }
 
-function clearLocalStorage() {
-    try {
-        localStorage.removeItem('teleClickData');
-        console.log('localStorage cleared');
-    } catch (e) {
-        console.error('Error clearing localStorage:', e);
-    }
-}
-
 // ==================== INITIALIZATION ====================
 
 document.addEventListener('DOMContentLoaded', () => {
@@ -1188,7 +1179,6 @@ function placeBid(auctionId) {
 // ==================== ADMIN ====================
 
 function setupAdmin() {
-    // Admin search input enter key
     document.getElementById('adminSearchInput').addEventListener('keypress', (e) => {
         if (e.key === 'Enter') adminSearchUsers();
     });
@@ -1226,7 +1216,6 @@ function adminSearchUsers() {
         adminUsers = data.users || [];
         renderAdminUsers();
         
-        // Update pagination info
         document.getElementById('adminPagination').innerHTML = `
             <span style="color:#888;font-size:12px;">
                 Qidiruv natijasi: ${adminUsers.length} ta foydalanuvchi
@@ -1443,14 +1432,12 @@ function adminAddEnergy(userId) {
 
 // ==================== AUTO REFRESH ====================
 
-// Auto refresh auctions every 30 seconds
 setInterval(() => {
     if (document.getElementById('tab-auction').classList.contains('active')) {
         refreshAuctions();
     }
 }, 30000);
 
-// Auto refresh energy every 10 seconds
 setInterval(() => {
     if (userData) {
         fetch(`/api/user?user_id=${userData.user_id}`)
@@ -1467,7 +1454,6 @@ setInterval(() => {
     }
 }, 10000);
 
-// Auto refresh leaderboard every 60 seconds
 setInterval(() => {
     if (document.getElementById('tab-leaderboard').classList.contains('active')) {
         loadLeaderboard();
