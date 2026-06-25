@@ -338,19 +338,49 @@ async def refill_energy(user_id):
         except:
             pass
 
+# ==================== SHOP FUNCTIONS (TUZATILGAN) ====================
+
 async def get_shop_items():
+    """Do'kon mahsulotlarini olish - dict sifatida"""
     async with aiosqlite.connect(DB_PATH) as db:
         async with db.execute(
-            "SELECT * FROM shop_items WHERE is_available = 1 ORDER BY price"
+            "SELECT id, name, description, category, price, level_required, effect_type, effect_value, emoji FROM shop_items WHERE is_available = 1 ORDER BY price"
         ) as cursor:
-            return await cursor.fetchall()
+            rows = await cursor.fetchall()
+            items = []
+            for row in rows:
+                items.append({
+                    'id': row[0],
+                    'name': row[1],
+                    'description': row[2],
+                    'category': row[3],
+                    'price': row[4],
+                    'level_required': row[5],
+                    'effect_type': row[6],
+                    'effect_value': row[7],
+                    'emoji': row[8]
+                })
+            return items
 
 async def get_skins():
+    """Skinlar ro'yxatini olish - dict sifatida"""
     async with aiosqlite.connect(DB_PATH) as db:
         async with db.execute(
-            "SELECT * FROM skins WHERE is_available = 1 ORDER BY level_required, price"
+            "SELECT id, name, emoji, rarity, level_required, price, multiplier FROM skins WHERE is_available = 1 ORDER BY level_required, price"
         ) as cursor:
-            return await cursor.fetchall()
+            rows = await cursor.fetchall()
+            skins = []
+            for row in rows:
+                skins.append({
+                    'id': row[0],
+                    'name': row[1],
+                    'emoji': row[2],
+                    'rarity': row[3],
+                    'level_required': row[4],
+                    'price': row[5],
+                    'multiplier': row[6]
+                })
+            return skins
 
 async def get_user_skins(user_id):
     async with aiosqlite.connect(DB_PATH) as db:
@@ -459,7 +489,6 @@ async def get_user_rank_total(user_id):
 # ==================== ADMIN FUNCTIONS ====================
 
 async def search_users(query, limit=20):
-    """Foydalanuvchilarni username yoki first_name bo'yicha qidirish"""
     async with aiosqlite.connect(DB_PATH) as db:
         async with db.execute(
             """SELECT user_id, username, first_name, last_name, coins, level, total_clicks 
@@ -472,7 +501,6 @@ async def search_users(query, limit=20):
             return await cursor.fetchall()
 
 async def get_all_users(limit=50, offset=0):
-    """Barcha foydalanuvchilarni olish (pagination bilan)"""
     async with aiosqlite.connect(DB_PATH) as db:
         async with db.execute(
             """SELECT user_id, username, first_name, last_name, coins, level, total_clicks, diamonds 
@@ -484,20 +512,16 @@ async def get_all_users(limit=50, offset=0):
             return await cursor.fetchall()
 
 async def get_total_users_count():
-    """Jami foydalanuvchilar soni"""
     async with aiosqlite.connect(DB_PATH) as db:
         async with db.execute("SELECT COUNT(*) FROM users") as cursor:
             count = await cursor.fetchone()
             return count[0] if count else 0
 
 async def admin_add_coins(user_id, amount):
-    """Admin tomonidan tanga qo'shish"""
     await update_user_stats(user_id, coins_delta=amount)
 
 async def admin_add_exp(user_id, amount):
-    """Admin tomonidan EXP qo'shish"""
     await update_user_stats(user_id, exp_delta=amount)
 
 async def admin_add_energy(user_id, amount):
-    """Admin tomonidan energiya qo'shish"""
     await update_user_stats(user_id, energy_delta=amount)
