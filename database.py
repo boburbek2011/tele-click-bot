@@ -87,12 +87,29 @@ async def init_db():
             )
         ''')
         
+        # Chat messages table
+        await db.execute('''
+            CREATE TABLE IF NOT EXISTS chat_messages (
+                id INTEGER PRIMARY KEY AUTOINCREMENT,
+                user_id INTEGER,
+                message TEXT,
+                created_at TIMESTAMP DEFAULT CURRENT_TIMESTAMP
+            )
+        ''')
+        
         await db.commit()
 
 async def get_user(user_id):
     async with aiosqlite.connect(DB_PATH) as db:
         async with db.execute(
             "SELECT * FROM users WHERE user_id = ?", (user_id,)
+        ) as cursor:
+            return await cursor.fetchone()
+
+async def get_user_by_username(username):
+    async with aiosqlite.connect(DB_PATH) as db:
+        async with db.execute(
+            "SELECT * FROM users WHERE username = ?", (username,)
         ) as cursor:
             return await cursor.fetchone()
 
@@ -106,16 +123,27 @@ async def create_user(user_id, username, first_name, last_name):
         )
         await db.commit()
 
-async def update_user_stats(user_id, coins_delta=0, exp_delta=0, clicks_delta=0):
+async def update_user_stats(user_id, coins_delta=0, exp_delta=0, clicks_delta=0, level_update=None):
     async with aiosqlite.connect(DB_PATH) as db:
-        await db.execute(
-            """UPDATE users 
-               SET coins = coins + ?, 
-                   exp = exp + ?,
-                   total_clicks = total_clicks + ?
-               WHERE user_id = ?""",
-            (coins_delta, exp_delta, clicks_delta, user_id)
-        )
+        if level_update is not None:
+            await db.execute(
+                """UPDATE users 
+                   SET coins = coins + ?, 
+                       exp = exp + ?,
+                       total_clicks = total_clicks + ?,
+                       level = ?
+                   WHERE user_id = ?""",
+                (coins_delta, exp_delta, clicks_delta, level_update, user_id)
+            )
+        else:
+            await db.execute(
+                """UPDATE users 
+                   SET coins = coins + ?, 
+                       exp = exp + ?,
+                       total_clicks = total_clicks + ?
+                   WHERE user_id = ?""",
+                (coins_delta, exp_delta, clicks_delta, user_id)
+            )
         await db.commit()
 
 async def get_top_users(limit=10):
@@ -126,9 +154,26 @@ async def get_top_users(limit=10):
         ) as cursor:
             return await cursor.fetchall()
 
-async def get_user_by_username(username):
-    async with aiosqlite.connect(DB_PATH) as db:
-        async with db.execute(
-            "SELECT * FROM users WHERE username = ?", (username,)
-        ) as cursor:
-            return await cursor.fetchone()
+async def get_user_level(user_id):
+    user = await get_user(user_id)
+    if user:
+        return user[5]
+    return 1
+
+async def get_user_exp(user_id):
+    user = await get_user(user_id)
+    if user:
+        return user[4]
+    return 0
+
+async def get_user_coins(user_id):
+    user = await get_user(user_id)
+    if user:
+        return user[3]
+    return 0
+
+async def get_user_diamonds(user_id):
+    user = await get_user(user_id)
+    if user:
+        return user[6]
+    return 0
