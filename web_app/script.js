@@ -6,6 +6,38 @@ let ws = null;
 let isConnected = false;
 let autoClickerInterval = null;
 
+// ==================== LOCAL STORAGE ====================
+
+function saveToLocalStorage(data) {
+    try {
+        localStorage.setItem('teleClickData', JSON.stringify(data));
+        console.log('Data saved to localStorage');
+    } catch (e) {
+        console.error('Error saving to localStorage:', e);
+    }
+}
+
+function loadFromLocalStorage() {
+    try {
+        const data = localStorage.getItem('teleClickData');
+        if (data) {
+            return JSON.parse(data);
+        }
+    } catch (e) {
+        console.error('Error loading from localStorage:', e);
+    }
+    return null;
+}
+
+function clearLocalStorage() {
+    try {
+        localStorage.removeItem('teleClickData');
+        console.log('localStorage cleared');
+    } catch (e) {
+        console.error('Error clearing localStorage:', e);
+    }
+}
+
 // ==================== INITIALIZATION ====================
 
 document.addEventListener('DOMContentLoaded', () => {
@@ -13,7 +45,17 @@ document.addEventListener('DOMContentLoaded', () => {
     const userId = urlParams.get('user_id');
     
     if (userId) {
-        loadUserData(userId);
+        // Try to load from localStorage first
+        const savedData = loadFromLocalStorage();
+        if (savedData && savedData.user_id == userId) {
+            console.log('Loading data from localStorage');
+            userData = savedData;
+            updateUI(userData);
+            // Still fetch from server to get latest data
+            loadUserData(userId);
+        } else {
+            loadUserData(userId);
+        }
     } else {
         alert('❌ Xatolik: Foydalanuvchi ID topilmadi!');
     }
@@ -24,34 +66,65 @@ document.addEventListener('DOMContentLoaded', () => {
     setupShop();
     setupSkins();
     setupChat();
+    setupLeaderboard();
 });
 
 // ==================== USER DATA ====================
 
 function loadUserData(userId) {
-    fetch('/api/user', {
-        method: 'POST',
-        headers: { 'Content-Type': 'application/json' },
-        body: JSON.stringify({ user_id: parseInt(userId) })
-    })
-    .then(res => res.json())
-    .then(data => {
-        if (data.error) {
-            alert('❌ Xatolik: ' + data.error);
-            return;
-        }
-        userData = data;
-        userData.user_id = parseInt(userId);
-        updateUI(data);
-        loadShop();
-        loadSkins();
-        loadUserSkins();
-        startAutoClicker();
-    })
-    .catch(err => {
-        console.error('Error loading user data:', err);
-        alert('❌ Xatolik yuz berdi!');
-    });
+    fetch(`/api/user?user_id=${userId}`)
+        .then(res => res.json())
+        .then(data => {
+            if (data.error) {
+                // Try to create user
+                fetch('/api/user', {
+                    method: 'POST',
+                    headers: { 'Content-Type': 'application/json' },
+                    body: JSON.stringify({ user_id: parseInt(userId) })
+                })
+                .then(res => res.json())
+                .then(newData => {
+                    if (newData.error) {
+                        alert('❌ Xatolik: ' + newData.error);
+                        return;
+                    }
+                    userData = newData;
+                    userData.user_id = parseInt(userId);
+                    updateUI(userData);
+                    saveToLocalStorage(userData);
+                    loadShop();
+                    loadSkins();
+                    loadUserSkins();
+                    startAutoClicker();
+                })
+                .catch(err => {
+                    console.error('Error creating user:', err);
+                    alert('❌ Xatolik yuz berdi!');
+                });
+                return;
+            }
+            
+            userData = data;
+            userData.user_id = parseInt(userId);
+            updateUI(data);
+            saveToLocalStorage(data);
+            loadShop();
+            loadSkins();
+            loadUserSkins();
+            startAutoClicker();
+        })
+        .catch(err => {
+            console.error('Error loading user data:', err);
+            // Try to load from localStorage if fetch fails
+            const savedData = loadFromLocalStorage();
+            if (savedData) {
+                userData = savedData;
+                updateUI(userData);
+                alert('⚠️ Offline rejimda ishlayapsiz! Ma\'lumotlar yangilanmadi.');
+            } else {
+                alert('❌ Xatolik yuz berdi!');
+            }
+        });
 }
 
 function updateUI(data) {
@@ -105,6 +178,9 @@ function updateUI(data) {
     document.getElementById('levelProgress').style.width = Math.min(Math.max(progress, 0), 100) + '%';
     document.getElementById('progressText').textContent = 
         `${formatNumber(Math.max(0, exp - requiredExp))} / ${formatNumber(nextRequiredExp - requiredExp)} EXP`;
+    
+    // Save to localStorage
+    saveToLocalStorage(data);
 }
 
 function formatNumber(num) {
@@ -141,6 +217,9 @@ function setupTabs() {
                 loadSkins();
                 loadUserSkins();
             }
+            if (btn.dataset.tab === 'leaderboard') {
+                loadLeaderboard();
+            }
         });
     });
 }
@@ -175,7 +254,9 @@ function setupClicker() {
                 userData.max_energy = data.max_energy;
                 userData.click_power = data.click_power;
                 userData.multiplier = data.multiplier;
+                userData.total_clicks = (userData.total_clicks || 0) + 1;
                 updateUI(userData);
+                saveToLocalStorage(userData);
                 
                 if (data.leveled_up) {
                     showLevelUp(data.level);
@@ -184,7 +265,19 @@ function setupClicker() {
                 showError(data.error);
             }
         })
-        .catch(err => console.error('Click error:', err))
+        .catch(err => {
+            console.error('Click error:', err);
+            // Offline mode - update locally
+            if (userData) {
+                userData.coins = (userData.coins || 0) + (userData.click_power || 1);
+                userData.exp = (userData.exp || 0) + 15;
+                userData.energy = (userData.energy || 0) - 1;
+                userData.total_clicks = (userData.total_clicks || 0) + 1;
+                updateUI(userData);
+                saveToLocalStorage(userData);
+                showError('⚠️ Offline rejim! Ma\'lumotlar mahalliy saqlandi.');
+            }
+        })
         .finally(() => {
             setTimeout(() => cooldown = false, 100);
         });
@@ -285,7 +378,6 @@ function startAutoClicker() {
         const autoLevel = userData.auto_clicker_level || 0;
         if (autoLevel <= 0) return;
         
-        // Auto click multiple times
         for (let i = 0; i < autoLevel; i++) {
             fetch('/api/click', {
                 method: 'POST',
@@ -300,17 +392,17 @@ function startAutoClicker() {
                     userData.level = data.level;
                     userData.energy = data.energy;
                     updateUI(userData);
+                    saveToLocalStorage(userData);
                 }
             })
             .catch(err => console.error('Auto click error:', err));
         }
-    }, 10000); // Har 10 soniyada
+    }, 10000);
 }
 
 // ==================== SHOP ====================
 
 function setupShop() {
-    // Category filters
     document.querySelectorAll('.category-btn').forEach(btn => {
         btn.addEventListener('click', () => {
             document.querySelectorAll('.category-btn').forEach(b => b.classList.remove('active'));
@@ -347,7 +439,6 @@ function loadShop() {
                 
                 const levelReq = item.level_required > 1 ? `📊 ${item.level_required}-daraja` : '🆓 Hech qanday';
                 const isAvailable = userData && userData.level >= item.level_required;
-                const canAfford = userData && userData.coins >= item.price;
                 
                 div.innerHTML = `
                     <div class="shop-item-emoji">${item.emoji}</div>
@@ -356,544 +447,4 @@ function loadShop() {
                     <div class="shop-item-price">💰 ${formatNumber(item.price)}</div>
                     <div class="shop-item-level">${levelReq}</div>
                     <button onclick="buyShopItem(${item.id})" 
-                            style="${!isAvailable ? 'opacity:0.5;' : ''}">
-                        ${isAvailable ? 'Sotib olish' : '🔒 Qulflangan'}
-                    </button>
-                `;
-                container.appendChild(div);
-            });
-        })
-        .catch(err => console.error('Error loading shop:', err));
-}
-
-function buyShopItem(itemId) {
-    if (!userData) return;
-    
-    fetch('/api/shop/buy', {
-        method: 'POST',
-        headers: { 'Content-Type': 'application/json' },
-        body: JSON.stringify({
-            user_id: userData.user_id,
-            item_id: itemId
-        })
-    })
-    .then(res => res.json())
-    .then(data => {
-        if (data.success) {
-            userData.coins = data.coins;
-            userData.max_energy = data.max_energy;
-            userData.click_power = data.click_power;
-            userData.auto_clicker_level = data.auto_clicker_level;
-            updateUI(userData);
-            alert(data.message);
-            loadShop();
-        } else {
-            alert('❌ Xatolik: ' + data.error);
-        }
-    })
-    .catch(err => console.error('Error buying item:', err));
-}
-
-// ==================== SKINS ====================
-
-function setupSkins() {
-    // Rarity filters
-    document.querySelectorAll('.skin-filter-btn').forEach(btn => {
-        btn.addEventListener('click', () => {
-            document.querySelectorAll('.skin-filter-btn').forEach(b => b.classList.remove('active'));
-            btn.classList.add('active');
-            
-            const rarity = btn.dataset.rarity;
-            document.querySelectorAll('.skin-item').forEach(item => {
-                if (rarity === 'all' || item.dataset.rarity === rarity) {
-                    item.style.display = 'block';
-                } else {
-                    item.style.display = 'none';
-                }
-            });
-        });
-    });
-}
-
-function loadSkins() {
-    fetch('/api/skins')
-        .then(res => res.json())
-        .then(skins => {
-            const container = document.getElementById('skinList');
-            container.innerHTML = '';
-            
-            if (!skins || skins.length === 0) {
-                container.innerHTML = '<p style="text-align:center;color:#888;padding:20px;">🎨 Hozircha skinlar yo\'q</p>';
-                return;
-            }
-            
-            skins.forEach(skin => {
-                const div = document.createElement('div');
-                div.className = `skin-item ${skin.rarity}`;
-                div.dataset.rarity = skin.rarity;
-                
-                const isAvailable = userData && userData.level >= skin.level_required;
-                const canAfford = userData && userData.coins >= skin.price;
-                
-                const rarityColors = {
-                    'common': '#00ff88',
-                    'rare': '#4488ff',
-                    'epic': '#aa44ff',
-                    'legendary': '#ffaa00'
-                };
-                
-                div.innerHTML = `
-                    <div class="skin-emoji">${skin.emoji}</div>
-                    <div class="skin-name">${skin.name}</div>
-                    <div class="skin-rarity" style="color: ${rarityColors[skin.rarity]}">${skin.rarity.toUpperCase()}</div>
-                    <div class="skin-multiplier">${skin.multiplier}x multiplier</div>
-                    <div class="skin-level">📊 ${skin.level_required}-daraja</div>
-                    <div class="skin-price">💰 ${formatNumber(skin.price)}</div>
-                    <button onclick="buySkin(${skin.id})">
-                        ${isAvailable ? 'Sotib olish' : '🔒 Qulflangan'}
-                    </button>
-                `;
-                container.appendChild(div);
-            });
-        })
-        .catch(err => console.error('Error loading skins:', err));
-}
-
-function loadUserSkins() {
-    if (!userData) return;
-    
-    fetch(`/api/user/skins?user_id=${userData.user_id}`)
-        .then(res => res.json())
-        .then(skins => {
-            // Mark owned skins
-            document.querySelectorAll('.skin-item').forEach(item => {
-                const btn = item.querySelector('button');
-                const skinId = parseInt(btn.getAttribute('onclick').match(/\d+/)[0]);
-                
-                const owned = skins.find(s => s.skin_id === skinId);
-                if (owned) {
-                    item.classList.add('owned');
-                    if (owned.is_active) {
-                        item.classList.add('active-skin');
-                        btn.textContent = '✅ Faol';
-                        btn.disabled = true;
-                        btn.style.opacity = '0.5';
-                    } else {
-                        btn.textContent = '👔 Kiymoq';
-                        btn.className = 'activate-btn';
-                        btn.onclick = function() { activateSkin(skinId); };
-                    }
-                }
-            });
-        })
-        .catch(err => console.error('Error loading user skins:', err));
-}
-
-function buySkin(skinId) {
-    if (!userData) return;
-    
-    fetch('/api/skin/buy', {
-        method: 'POST',
-        headers: { 'Content-Type': 'application/json' },
-        body: JSON.stringify({
-            user_id: userData.user_id,
-            skin_id: skinId
-        })
-    })
-    .then(res => res.json())
-    .then(data => {
-        if (data.success) {
-            userData.coins = data.coins;
-            updateUI(userData);
-            alert(data.message);
-            loadSkins();
-            loadUserSkins();
-        } else {
-            alert('❌ Xatolik: ' + data.error);
-        }
-    })
-    .catch(err => console.error('Error buying skin:', err));
-}
-
-function activateSkin(skinId) {
-    if (!userData) return;
-    
-    fetch('/api/skin/activate', {
-        method: 'POST',
-        headers: { 'Content-Type': 'application/json' },
-        body: JSON.stringify({
-            user_id: userData.user_id,
-            skin_id: skinId
-        })
-    })
-    .then(res => res.json())
-    .then(data => {
-        if (data.success) {
-            alert('✅ Skin faollashtirildi!');
-            loadSkins();
-            loadUserSkins();
-        } else {
-            alert('❌ Xatolik: ' + data.error);
-        }
-    })
-    .catch(err => console.error('Error activating skin:', err));
-}
-
-// ==================== PROFILE FUNCTIONS ====================
-
-function changeTitle() {
-    if (!userData) return;
-    const title = prompt('Yangi unvoningizni kiriting (emoji bilan):');
-    if (!title) return;
-    
-    fetch('/api/title', {
-        method: 'POST',
-        headers: { 'Content-Type': 'application/json' },
-        body: JSON.stringify({ 
-            user_id: userData.user_id,
-            title: title 
-        })
-    })
-    .then(res => res.json())
-    .then(data => {
-        if (data.success) {
-            userData.title = data.title;
-            updateUI(userData);
-            alert('✅ Unvon o\'zgartirildi!');
-        } else {
-            alert('❌ Xatolik: ' + data.error);
-        }
-    })
-    .catch(err => console.error('Error:', err));
-}
-
-function buyDiamond() {
-    if (!userData) return;
-    if (userData.coins < 1500000) {
-        alert(`❌ Yetarli tanga yo'q! 1.5 mln tanga kerak. Sizda: ${formatNumber(userData.coins)}`);
-        return;
-    }
-    
-    if (!confirm('💎 1.5 mln tangaga 1 ta olmos sotib olasizmi?')) return;
-    
-    fetch('/api/diamond', {
-        method: 'POST',
-        headers: { 'Content-Type': 'application/json' },
-        body: JSON.stringify({ user_id: userData.user_id })
-    })
-    .then(res => res.json())
-    .then(data => {
-        if (data.success) {
-            userData.coins = data.coins;
-            userData.diamonds = data.diamonds;
-            updateUI(userData);
-            alert('✅ Olmos sotib olindi!');
-        } else {
-            alert('❌ Xatolik: ' + data.error);
-        }
-    })
-    .catch(err => console.error('Error:', err));
-}
-
-function sendCoins() {
-    if (!userData) return;
-    const target = prompt('Tangani yubormoqchi bo\'lgan foydalanuvchi ID sini kiriting:');
-    if (!target) return;
-    const amount = parseInt(prompt('Nechta tanga yubormoqchisiz?'));
-    if (!amount || amount <= 0) return;
-    if (amount > userData.coins) {
-        alert('❌ Yetarli tanga yo\'q!');
-        return;
-    }
-    
-    fetch('/api/send', {
-        method: 'POST',
-        headers: { 'Content-Type': 'application/json' },
-        body: JSON.stringify({ 
-            user_id: userData.user_id,
-            target: parseInt(target), 
-            amount: amount 
-        })
-    })
-    .then(res => res.json())
-    .then(data => {
-        if (data.success) {
-            userData.coins = data.coins;
-            updateUI(userData);
-            alert('✅ Tanga yuborildi!');
-        } else {
-            alert('❌ Xatolik: ' + data.error);
-        }
-    })
-    .catch(err => console.error('Error:', err));
-}
-
-function showPromo() {
-    if (!userData) return;
-    const code = prompt('Promokodni kiriting:');
-    if (!code) return;
-    
-    fetch('/api/promo', {
-        method: 'POST',
-        headers: { 'Content-Type': 'application/json' },
-        body: JSON.stringify({ 
-            user_id: userData.user_id,
-            code: code.toUpperCase() 
-        })
-    })
-    .then(res => res.json())
-    .then(data => {
-        if (data.success) {
-            userData.coins = data.coins;
-            userData.exp = data.exp;
-            updateUI(userData);
-            alert(`✅ Promokod aktivlashtirildi! +${formatNumber(data.added_coins)} 🪙, +${formatNumber(data.added_exp)} ⭐`);
-        } else {
-            alert('❌ Xatolik: ' + data.error);
-        }
-    })
-    .catch(err => console.error('Error:', err));
-}
-
-// ==================== CHAT ====================
-
-function setupChat() {
-    const input = document.getElementById('chatInput');
-    input.addEventListener('keypress', (e) => {
-        if (e.key === 'Enter') sendMessage();
-    });
-}
-
-function sendMessage() {
-    const input = document.getElementById('chatInput');
-    const text = input.value.trim();
-    if (!text || !isConnected || !userData) return;
-    
-    ws.send(JSON.stringify({
-        type: 'chat',
-        user_id: userData.user_id,
-        message: text
-    }));
-    
-    input.value = '';
-}
-
-function addChatMessage(data) {
-    const container = document.getElementById('chatMessages');
-    const msgDiv = document.createElement('div');
-    msgDiv.className = 'chat-message';
-    
-    if (data.user_id === userData?.user_id) {
-        msgDiv.classList.add('own');
-    }
-    
-    const userSpan = document.createElement('div');
-    userSpan.className = 'message-user';
-    const name = data.username || data.first_name || 'Foydalanuvchi';
-    const displayName = name.length > 20 ? name.substring(0, 17) + '...' : name;
-    userSpan.innerHTML = `<span style="color: ${data.color || '#00ff88'}">${data.title || '🟢'}</span> ${displayName}`;
-    
-    const textSpan = document.createElement('div');
-    textSpan.className = 'message-text';
-    textSpan.textContent = data.message;
-    
-    const timeSpan = document.createElement('div');
-    timeSpan.className = 'message-time';
-    timeSpan.textContent = new Date(data.time).toLocaleTimeString();
-    
-    msgDiv.appendChild(userSpan);
-    msgDiv.appendChild(textSpan);
-    msgDiv.appendChild(timeSpan);
-    container.appendChild(msgDiv);
-    container.scrollTop = container.scrollHeight;
-    
-    while (container.children.length > 100) {
-        container.removeChild(container.firstChild);
-    }
-}
-
-// ==================== WEBSOCKET ====================
-
-function setupWebSocket() {
-    const protocol = window.location.protocol === 'https:' ? 'wss:' : 'ws:';
-    ws = new WebSocket(`${protocol}//${window.location.host}/ws`);
-    
-    ws.onopen = () => {
-        console.log('WebSocket connected');
-        isConnected = true;
-        if (userData) {
-            ws.send(JSON.stringify({
-                type: 'auth',
-                user_id: userData.user_id
-            }));
-        }
-    };
-    
-    ws.onmessage = (event) => {
-        try {
-            const data = JSON.parse(event.data);
-            if (data.type === 'chat') {
-                addChatMessage(data);
-            }
-        } catch (e) {
-            console.error('WebSocket message error:', e);
-        }
-    };
-    
-    ws.onclose = () => {
-        console.log('WebSocket disconnected');
-        isConnected = false;
-        setTimeout(setupWebSocket, 3000);
-    };
-    
-    ws.onerror = (error) => {
-        console.error('WebSocket error:', error);
-    };
-}
-
-// ==================== AUCTION ====================
-
-function createAuction() {
-    if (!userData) return;
-    const name = prompt('Auktsion nomi:');
-    if (!name) return;
-    const desc = prompt('Tavsif:');
-    const price = parseInt(prompt('Boshlang\'ich narx:'));
-    if (!price || price <= 0) return;
-    const duration = parseInt(prompt('Davomiyligi (daqiqa):'));
-    if (!duration || duration <= 0) return;
-    
-    fetch('/api/auction/create', {
-        method: 'POST',
-        headers: { 'Content-Type': 'application/json' },
-        body: JSON.stringify({ 
-            user_id: userData.user_id,
-            name, 
-            desc, 
-            price, 
-            duration 
-        })
-    })
-    .then(res => res.json())
-    .then(data => {
-        if (data.success) {
-            alert('✅ Auktsion yaratildi!');
-            refreshAuctions();
-            document.querySelector('[data-tab="auction"]').click();
-        } else {
-            alert('❌ Xatolik: ' + data.error);
-        }
-    })
-    .catch(err => console.error('Error:', err));
-}
-
-function refreshAuctions() {
-    fetch('/api/auctions')
-        .then(res => res.json())
-        .then(data => {
-            const container = document.getElementById('auctionList');
-            container.innerHTML = '';
-            
-            if (!data || data.length === 0) {
-                container.innerHTML = '<p style="text-align:center;color:#888;padding:20px;">🔨 Hozircha faol auktsionlar yo\'q</p>';
-                return;
-            }
-            
-            data.forEach(item => {
-                const div = document.createElement('div');
-                div.className = 'auction-item';
-                const timeLeft = getTimeLeft(item.end_time);
-                div.innerHTML = `
-                    <h4>📦 ${item.item_name}</h4>
-                    <p>${item.item_description}</p>
-                    <p>💰 Joriy narx: ${formatNumber(item.current_bid || item.start_price)} 🪙</p>
-                    <p>👤 Yaratuvchi: ${item.creator_name || item.creator_id}</p>
-                    <p>⏰ ${timeLeft}</p>
-                    <button onclick="placeBid(${item.id})">💰 Taklif qilish</button>
-                `;
-                container.appendChild(div);
-            });
-        })
-        .catch(err => console.error('Error loading auctions:', err));
-}
-
-function getTimeLeft(endTime) {
-    const end = new Date(endTime);
-    const now = new Date();
-    const diff = end - now;
-    
-    if (diff <= 0) return '⏰ Tugagan';
-    
-    const minutes = Math.floor(diff / 60000);
-    const seconds = Math.floor((diff % 60000) / 1000);
-    
-    if (minutes > 60) {
-        const hours = Math.floor(minutes / 60);
-        return `⏰ ${hours} soat ${minutes % 60} daqiqa`;
-    }
-    return `⏰ ${minutes} daqiqa ${seconds} soniya`;
-}
-
-function placeBid(auctionId) {
-    if (!userData) return;
-    const amount = parseInt(prompt('Taklif miqdori:'));
-    if (!amount || amount <= 0) return;
-    
-    if (amount > userData.coins) {
-        alert('❌ Yetarli tanga yo\'q!');
-        return;
-    }
-    
-    fetch('/api/auction/bid', {
-        method: 'POST',
-        headers: { 'Content-Type': 'application/json' },
-        body: JSON.stringify({ 
-            user_id: userData.user_id,
-            auction_id: auctionId, 
-            amount: amount 
-        })
-    })
-    .then(res => res.json())
-    .then(data => {
-        if (data.success) {
-            alert('✅ Taklif qabul qilindi!');
-            userData.coins = data.coins;
-            updateUI(userData);
-            refreshAuctions();
-        } else {
-            alert('❌ Xatolik: ' + data.error);
-        }
-    })
-    .catch(err => console.error('Error:', err));
-}
-
-// ==================== AUTO REFRESH ====================
-
-// Auto refresh auctions every 30 seconds
-setInterval(() => {
-    if (document.getElementById('tab-auction').classList.contains('active')) {
-        refreshAuctions();
-    }
-}, 30000);
-
-// Auto refresh energy every 10 seconds
-setInterval(() => {
-    if (userData) {
-        // Energy automatically refills on server side
-        // Just update UI to show changes
-        fetch('/api/user', {
-            method: 'POST',
-            headers: { 'Content-Type': 'application/json' },
-            body: JSON.stringify({ user_id: userData.user_id })
-        })
-        .then(res => res.json())
-        .then(data => {
-            if (!data.error) {
-                userData.energy = data.energy;
-                userData.max_energy = data.max_energy;
-                updateUI(userData);
-            }
-        })
-        .catch(err => console.error('Error refreshing energy:', err));
-    }
-}, 10000);
+                            style="${!isAvailable ? 'opacity:0.5;' : ''}
