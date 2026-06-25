@@ -1,3 +1,9 @@
+import sys
+import os
+# Bu qatorlar pydantic bilan bog'liq muammolarni oldini oladi
+os.environ["PYTHONHASHSEED"] = "0"
+os.environ["PYTHONIOENCODING"] = "utf-8"
+
 import asyncio
 import logging
 import json
