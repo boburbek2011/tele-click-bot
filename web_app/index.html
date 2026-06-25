@@ -1,0 +1,122 @@
+<!DOCTYPE html>
+<html lang="uz">
+<head>
+    <meta charset="UTF-8">
+    <meta name="viewport" content="width=device-width, initial-scale=1.0, maximum-scale=1.0, user-scalable=no">
+    <title>Tele Click Bot</title>
+    <link rel="stylesheet" href="style.css">
+    <script src="https://telegram.org/js/telegram-web-app.js"></script>
+</head>
+<body>
+    <div id="app">
+        <header>
+            <h1>⚡ Tele Click</h1>
+            <div id="user-info">
+                <span id="user-name">Loading...</span>
+                <span id="user-title">🟢 Yangi o'yinchi</span>
+            </div>
+        </header>
+
+        <nav>
+            <button class="nav-btn active" data-tab="clicker">🏠 Clicker</button>
+            <button class="nav-btn" data-tab="profile">👤 Profil</button>
+            <button class="nav-btn" data-tab="chat">💬 Chat</button>
+            <button class="nav-btn" data-tab="auction">🔨 Auktsion</button>
+        </nav>
+
+        <!-- Clicker Tab -->
+        <div id="tab-clicker" class="tab-content active">
+            <div class="stats">
+                <div class="stat-item">
+                    <span class="stat-label">🪙 Tangalar</span>
+                    <span class="stat-value" id="coins">0</span>
+                </div>
+                <div class="stat-item">
+                    <span class="stat-label">⭐ EXP</span>
+                    <span class="stat-value" id="exp">0</span>
+                </div>
+                <div class="stat-item">
+                    <span class="stat-label">📊 Daraja</span>
+                    <span class="stat-value" id="level">1</span>
+                </div>
+                <div class="stat-item">
+                    <span class="stat-label">💎 Olmos</span>
+                    <span class="stat-value" id="diamonds">0</span>
+                </div>
+            </div>
+
+            <div class="click-area">
+                <div class="click-button" id="clickBtn">
+                    <div class="coin-icon">🪙</div>
+                    <div class="click-text">BOSISH</div>
+                    <div class="click-subtext">+1 coin, +1 exp</div>
+                </div>
+            </div>
+
+            <div class="progress-section">
+                <div class="level-progress">
+                    <div class="progress-bar" id="levelProgress" style="width: 0%"></div>
+                </div>
+                <div class="progress-text" id="progressText">0 / 100 EXP</div>
+            </div>
+        </div>
+
+        <!-- Profile Tab -->
+        <div id="tab-profile" class="tab-content">
+            <div class="profile-card">
+                <div class="avatar" id="avatar">👤</div>
+                <div class="profile-name" id="profileName">Username</div>
+                <div class="profile-title" id="profileTitle">🟢 Yangi o'yinchi</div>
+                <div class="profile-stats">
+                    <div class="stat-item">
+                        <span>🪙</span>
+                        <span id="profileCoins">0</span>
+                    </div>
+                    <div class="stat-item">
+                        <span>⭐</span>
+                        <span id="profileExp">0</span>
+                    </div>
+                    <div class="stat-item">
+                        <span>📊</span>
+                        <span id="profileLevel">1</span>
+                    </div>
+                    <div class="stat-item">
+                        <span>💎</span>
+                        <span id="profileDiamonds">0</span>
+                    </div>
+                    <div class="stat-item">
+                        <span>🖱️</span>
+                        <span id="profileClicks">0</span>
+                    </div>
+                </div>
+                <button class="action-btn" onclick="changeTitle()">🏷️ Unvonni o'zgartirish</button>
+                <button class="action-btn" onclick="buyDiamond()">💎 Olmos sotib olish</button>
+                <button class="action-btn" onclick="sendCoins()">📤 Tanga yuborish</button>
+                <button class="action-btn" onclick="showPromo()">🎁 Promokod kiritish</button>
+            </div>
+        </div>
+
+        <!-- Chat Tab -->
+        <div id="tab-chat" class="tab-content">
+            <div class="chat-container">
+                <div class="chat-messages" id="chatMessages"></div>
+                <div class="chat-input-area">
+                    <input type="text" id="chatInput" placeholder="Xabaringizni yozing...">
+                    <button onclick="sendMessage()">➤</button>
+                </div>
+            </div>
+        </div>
+
+        <!-- Auction Tab -->
+        <div id="tab-auction" class="tab-content">
+            <div class="auction-controls">
+                <button class="action-btn" onclick="createAuction()">📦 Auktsion ochish</button>
+                <button class="action-btn" onclick="refreshAuctions()">🔄 Yangilash</button>
+            </div>
+            <div id="auctionList" class="auction-list"></div>
+        </div>
+    </div>
+
+    <script src="script.js"></script>
+</body>
+</html>
