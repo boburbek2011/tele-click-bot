@@ -17,15 +17,19 @@
             </div>
         </header>
 
+        <!-- Navigation -->
         <nav>
             <button class="nav-btn active" data-tab="clicker">🏠 Clicker</button>
             <button class="nav-btn" data-tab="profile">👤 Profil</button>
+            <button class="nav-btn" data-tab="shop">🏪 Do'kon</button>
+            <button class="nav-btn" data-tab="skins">🎨 Skinlar</button>
             <button class="nav-btn" data-tab="chat">💬 Chat</button>
             <button class="nav-btn" data-tab="auction">🔨 Auktsion</button>
         </nav>
 
-        <!-- Clicker Tab -->
+        <!-- ==================== CLICKER TAB ==================== -->
         <div id="tab-clicker" class="tab-content active">
+            <!-- Stats -->
             <div class="stats">
                 <div class="stat-item">
                     <span class="stat-label">🪙 Tangalar</span>
@@ -45,14 +49,29 @@
                 </div>
             </div>
 
+            <!-- Energy Bar -->
+            <div class="energy-bar">
+                <div class="energy-fill" id="energyFill" style="width: 100%"></div>
+                <div class="energy-text" id="energyText">⚡ 500 / 500</div>
+            </div>
+
+            <!-- Click Power & Multiplier -->
+            <div class="power-info">
+                <span>💪 Kuch: <strong id="clickPower">1</strong></span>
+                <span>🌟 Multiplier: <strong id="multiplierDisplay">1x</strong></span>
+                <span>🤖 Avto: <strong id="autoLevel">0</strong></span>
+            </div>
+
+            <!-- Click Button -->
             <div class="click-area">
                 <div class="click-button" id="clickBtn">
                     <div class="coin-icon">🪙</div>
                     <div class="click-text">BOSISH</div>
-                    <div class="click-subtext">+1 coin, +1 exp</div>
+                    <div class="click-subtext" id="clickInfo">+1 coin, +10-20 exp</div>
                 </div>
             </div>
 
+            <!-- Progress -->
             <div class="progress-section">
                 <div class="level-progress">
                     <div class="progress-bar" id="levelProgress" style="width: 0%"></div>
@@ -61,12 +80,13 @@
             </div>
         </div>
 
-        <!-- Profile Tab -->
+        <!-- ==================== PROFILE TAB ==================== -->
         <div id="tab-profile" class="tab-content">
             <div class="profile-card">
                 <div class="avatar" id="avatar">👤</div>
                 <div class="profile-name" id="profileName">Username</div>
                 <div class="profile-title" id="profileTitle">🟢 Yangi o'yinchi</div>
+                
                 <div class="profile-stats">
                     <div class="stat-item">
                         <span>🪙</span>
@@ -88,15 +108,55 @@
                         <span>🖱️</span>
                         <span id="profileClicks">0</span>
                     </div>
+                    <div class="stat-item">
+                        <span>⚡</span>
+                        <span id="profileEnergy">500</span>
+                    </div>
                 </div>
+
                 <button class="action-btn" onclick="changeTitle()">🏷️ Unvonni o'zgartirish</button>
-                <button class="action-btn" onclick="buyDiamond()">💎 Olmos sotib olish</button>
+                <button class="action-btn" onclick="buyDiamond()">💎 Olmos sotib olish (1.5M)</button>
                 <button class="action-btn" onclick="sendCoins()">📤 Tanga yuborish</button>
                 <button class="action-btn" onclick="showPromo()">🎁 Promokod kiritish</button>
             </div>
         </div>
 
-        <!-- Chat Tab -->
+        <!-- ==================== SHOP TAB ==================== -->
+        <div id="tab-shop" class="tab-content">
+            <h3 class="tab-title">🏪 Do'kon</h3>
+            
+            <div class="shop-categories">
+                <button class="category-btn active" data-category="all">📦 Hammasi</button>
+                <button class="category-btn" data-category="energy">⚡ Energiya</button>
+                <button class="category-btn" data-category="click">💪 Click</button>
+                <button class="category-btn" data-category="auto">🤖 Avto</button>
+                <button class="category-btn" data-category="offline">⛏️ Offline</button>
+                <button class="category-btn" data-category="multiplier">🌟 Multiplier</button>
+            </div>
+
+            <div id="shopItems" class="shop-grid">
+                <p style="text-align:center;color:#888;padding:20px;">⏳ Yuklanmoqda...</p>
+            </div>
+        </div>
+
+        <!-- ==================== SKINS TAB ==================== -->
+        <div id="tab-skins" class="tab-content">
+            <h3 class="tab-title">🎨 Skinlar</h3>
+            
+            <div class="skin-filters">
+                <button class="skin-filter-btn active" data-rarity="all">🌟 Hammasi</button>
+                <button class="skin-filter-btn" data-rarity="common">🟢 Common</button>
+                <button class="skin-filter-btn" data-rarity="rare">🔵 Rare</button>
+                <button class="skin-filter-btn" data-rarity="epic">🟣 Epic</button>
+                <button class="skin-filter-btn" data-rarity="legendary">🌟 Legendary</button>
+            </div>
+
+            <div id="skinList" class="skin-grid">
+                <p style="text-align:center;color:#888;padding:20px;">⏳ Yuklanmoqda...</p>
+            </div>
+        </div>
+
+        <!-- ==================== CHAT TAB ==================== -->
         <div id="tab-chat" class="tab-content">
             <div class="chat-container">
                 <div class="chat-messages" id="chatMessages"></div>
@@ -107,7 +167,7 @@
             </div>
         </div>
 
-        <!-- Auction Tab -->
+        <!-- ==================== AUCTION TAB ==================== -->
         <div id="tab-auction" class="tab-content">
             <div class="auction-controls">
                 <button class="action-btn" onclick="createAuction()">📦 Auktsion ochish</button>
