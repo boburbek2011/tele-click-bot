@@ -17,15 +17,35 @@
             </div>
         </header>
 
-        <!-- Navigation -->
-        <nav>
-            <button class="nav-btn active" data-tab="clicker">🏠 Clicker</button>
-            <button class="nav-btn" data-tab="profile">👤 Profil</button>
-            <button class="nav-btn" data-tab="shop">🏪 Do'kon</button>
-            <button class="nav-btn" data-tab="skins">🎨 Skinlar</button>
-            <button class="nav-btn" data-tab="chat">💬 Chat</button>
-            <button class="nav-btn" data-tab="auction">🔨 Auktsion</button>
-        </nav>
+       
+<nav>
+    <button class="nav-btn active" data-tab="clicker">🏠 Clicker</button>
+    <button class="nav-btn" data-tab="profile">👤 Profil</button>
+    <button class="nav-btn" data-tab="shop">🏪 Do'kon</button>
+    <button class="nav-btn" data-tab="skins">🎨 Skinlar</button>
+    <button class="nav-btn" data-tab="leaderboard">🏆 Reyting</button>
+    <button class="nav-btn" data-tab="chat">💬 Chat</button>
+    <button class="nav-btn" data-tab="auction">🔨 Auktsion</button>
+    <button class="nav-btn admin-tab" data-tab="admin" style="display:none;color:#ff4444;">👑 Admin</button>
+</nav>
+
+<!-- ==================== ADMIN TAB ==================== -->
+<div id="tab-admin" class="tab-content">
+    <h3 class="tab-title">👑 Admin Panel</h3>
+    
+    <div class="admin-search">
+        <input type="text" id="adminSearchInput" placeholder="🔍 Foydalanuvchi qidirish (ism yoki username)">
+        <button onclick="adminSearchUsers()">🔍 Qidirish</button>
+    </div>
+    
+    <div class="admin-user-list" id="adminUserList">
+        <p style="text-align:center;color:#888;padding:20px;">👤 Foydalanuvchilarni qidiring yoki yuklang</p>
+    </div>
+    
+    <div class="admin-actions">
+        <button class="action-btn" onclick="adminLoadAllUsers()">📋 Barcha foydalanuvchilar</button>
+    </div>
+</div>
 
         <!-- ==================== CLICKER TAB ==================== -->
         <div id="tab-clicker" class="tab-content active">
