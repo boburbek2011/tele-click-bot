@@ -7,6 +7,7 @@ import asyncio
 import logging
 import json
 import random
+import string
 from datetime import datetime, timedelta
 import aiosqlite
 from aiohttp import web
@@ -19,7 +20,9 @@ from database import (
     init_db, get_user, create_user, update_user_stats, 
     refill_energy, get_shop_items, get_skins, get_user_skins, 
     purchase_item, get_required_exp, get_user_total_multiplier,
-    get_leaderboard_current, get_leaderboard_total, get_user_rank_current, get_user_rank_total
+    get_leaderboard_current, get_leaderboard_total, get_user_rank_current, get_user_rank_total,
+    search_users, get_all_users, get_total_users_count,
+    admin_add_coins, admin_add_exp, admin_add_energy
 )
 
 logging.basicConfig(
@@ -672,6 +675,173 @@ async def get_user_rank_api(request):
         logging.error(f"Error in /api/leaderboard/rank: {e}")
         return web.json_response({'error': str(e)}, status=500)
 
+# ==================== ADMIN API (Web App) ====================
+
+@routes.get('/api/admin/users')
+async def admin_get_users(request):
+    try:
+        user_id = request.query.get('user_id')
+        if not user_id:
+            return web.json_response({'error': 'No user_id'}, status=400)
+        
+        if int(user_id) not in ADMIN_IDS:
+            return web.json_response({'error': 'Unauthorized'}, status=403)
+        
+        limit = request.query.get('limit', 50)
+        offset = request.query.get('offset', 0)
+        try:
+            limit = int(limit)
+            offset = int(offset)
+        except:
+            limit = 50
+            offset = 0
+        
+        users = await get_all_users(limit, offset)
+        total = await get_total_users_count()
+        
+        result = []
+        for user in users:
+            result.append({
+                'user_id': user[0],
+                'username': user[1] or 'No username',
+                'first_name': user[2] or 'No name',
+                'last_name': user[3] or '',
+                'coins': user[4],
+                'level': user[5],
+                'total_clicks': user[6],
+                'diamonds': user[7]
+            })
+        
+        return web.json_response({
+            'users': result,
+            'total': total,
+            'limit': limit,
+            'offset': offset
+        })
+    except Exception as e:
+        logging.error(f"Error in /api/admin/users: {e}")
+        return web.json_response({'error': str(e)}, status=500)
+
+@routes.post('/api/admin/search')
+async def admin_search_users(request):
+    try:
+        data = await request.json()
+        user_id = data.get('user_id')
+        query = data.get('query', '')
+        
+        if not user_id:
+            return web.json_response({'error': 'No user_id'}, status=400)
+        
+        if int(user_id) not in ADMIN_IDS:
+            return web.json_response({'error': 'Unauthorized'}, status=403)
+        
+        if not query or len(query) < 2:
+            return web.json_response({'error': 'Query too short'}, status=400)
+        
+        users = await search_users(query)
+        
+        result = []
+        for user in users:
+            result.append({
+                'user_id': user[0],
+                'username': user[1] or 'No username',
+                'first_name': user[2] or 'No name',
+                'last_name': user[3] or '',
+                'coins': user[4],
+                'level': user[5],
+                'total_clicks': user[6]
+            })
+        
+        return web.json_response({
+            'users': result,
+            'query': query,
+            'count': len(result)
+        })
+    except Exception as e:
+        logging.error(f"Error in /api/admin/search: {e}")
+        return web.json_response({'error': str(e)}, status=500)
+
+@routes.post('/api/admin/add_coins')
+async def admin_add_coins_api(request):
+    try:
+        data = await request.json()
+        admin_id = data.get('admin_id')
+        target_id = data.get('target_id')
+        amount = data.get('amount')
+        
+        if not all([admin_id, target_id, amount]):
+            return web.json_response({'error': 'Missing data'}, status=400)
+        
+        if int(admin_id) not in ADMIN_IDS:
+            return web.json_response({'error': 'Unauthorized'}, status=403)
+        
+        await admin_add_coins(int(target_id), int(amount))
+        
+        user = await get_user(int(target_id))
+        return web.json_response({
+            'success': True,
+            'user_id': target_id,
+            'new_coins': user[4] if user else 0,
+            'message': f'✅ {target_id} ga {amount} tanga qo\'shildi!'
+        })
+    except Exception as e:
+        logging.error(f"Error in /api/admin/add_coins: {e}")
+        return web.json_response({'error': str(e)}, status=500)
+
+@routes.post('/api/admin/add_exp')
+async def admin_add_exp_api(request):
+    try:
+        data = await request.json()
+        admin_id = data.get('admin_id')
+        target_id = data.get('target_id')
+        amount = data.get('amount')
+        
+        if not all([admin_id, target_id, amount]):
+            return web.json_response({'error': 'Missing data'}, status=400)
+        
+        if int(admin_id) not in ADMIN_IDS:
+            return web.json_response({'error': 'Unauthorized'}, status=403)
+        
+        await admin_add_exp(int(target_id), int(amount))
+        
+        user = await get_user(int(target_id))
+        return web.json_response({
+            'success': True,
+            'user_id': target_id,
+            'new_exp': user[5] if user else 0,
+            'message': f'✅ {target_id} ga {amount} EXP qo\'shildi!'
+        })
+    except Exception as e:
+        logging.error(f"Error in /api/admin/add_exp: {e}")
+        return web.json_response({'error': str(e)}, status=500)
+
+@routes.post('/api/admin/add_energy')
+async def admin_add_energy_api(request):
+    try:
+        data = await request.json()
+        admin_id = data.get('admin_id')
+        target_id = data.get('target_id')
+        amount = data.get('amount')
+        
+        if not all([admin_id, target_id, amount]):
+            return web.json_response({'error': 'Missing data'}, status=400)
+        
+        if int(admin_id) not in ADMIN_IDS:
+            return web.json_response({'error': 'Unauthorized'}, status=403)
+        
+        await admin_add_energy(int(target_id), int(amount))
+        
+        user = await get_user(int(target_id))
+        return web.json_response({
+            'success': True,
+            'user_id': target_id,
+            'new_energy': user[11] if user else 0,
+            'message': f'✅ {target_id} ga {amount} energiya qo\'shildi!'
+        })
+    except Exception as e:
+        logging.error(f"Error in /api/admin/add_energy: {e}")
+        return web.json_response({'error': str(e)}, status=500)
+
 # ==================== AUCTION API ====================
 
 @routes.post('/api/auction/create')
@@ -684,21 +854,40 @@ async def create_auction(request):
         price = data.get('price')
         duration = data.get('duration')
         
+        logging.info(f"Creating auction: user_id={user_id}, name={name}, price={price}")
+        
         if not all([user_id, name, desc, price, duration]):
             return web.json_response({'error': 'Missing data'}, status=400)
+        
+        user = await get_user(int(user_id))
+        if not user:
+            return web.json_response({'error': 'User not found'}, status=404)
+        
+        if user[4] < int(price):
+            return web.json_response({'error': 'Not enough coins to create auction'}, status=400)
+        
+        await update_user_stats(int(user_id), coins_delta=-int(price))
         
         end_time = datetime.now() + timedelta(minutes=int(duration))
         
         async with aiosqlite.connect(DB_PATH) as db:
-            await db.execute(
+            cursor = await db.execute(
                 """INSERT INTO auctions 
                    (creator_id, item_name, item_description, start_price, current_bid, end_time) 
                    VALUES (?, ?, ?, ?, ?, ?)""",
                 (int(user_id), name, desc, int(price), int(price), end_time.isoformat())
             )
             await db.commit()
+            auction_id = cursor.lastrowid
         
-        return web.json_response({'success': True})
+        updated_user = await get_user(int(user_id))
+        
+        return web.json_response({
+            'success': True,
+            'auction_id': auction_id,
+            'coins': updated_user[4],
+            'message': f'✅ Auktsion yaratildi! ID: {auction_id}'
+        })
     except Exception as e:
         logging.error(f"Error in /api/auction/create: {e}")
         return web.json_response({'error': str(e)}, status=500)
@@ -711,11 +900,16 @@ async def place_bid(request):
         auction_id = data.get('auction_id')
         amount = data.get('amount')
         
+        logging.info(f"Placing bid: user_id={user_id}, auction_id={auction_id}, amount={amount}")
+        
         if not all([user_id, auction_id, amount]):
             return web.json_response({'error': 'Missing data'}, status=400)
         
         user = await get_user(int(user_id))
-        if not user or user[4] < amount:
+        if not user:
+            return web.json_response({'error': 'User not found'}, status=404)
+        
+        if user[4] < amount:
             return web.json_response({'error': 'Not enough coins'}, status=400)
         
         async with aiosqlite.connect(DB_PATH) as db:
@@ -730,6 +924,9 @@ async def place_bid(request):
             
             if amount <= auction[5]:
                 return web.json_response({'error': f'Bid must be higher than {auction[5]}'}, status=400)
+            
+            if auction[6] and auction[6] > 0:
+                await update_user_stats(int(auction[6]), coins_delta=auction[5])
             
             await db.execute(
                 "UPDATE auctions SET current_bid = ?, current_bidder_id = ? WHERE id = ?",
@@ -747,7 +944,8 @@ async def place_bid(request):
         
         return web.json_response({
             'success': True,
-            'coins': updated_user[4]
+            'coins': updated_user[4],
+            'message': f'✅ Taklif qabul qilindi! Yangi narx: {amount}'
         })
     except Exception as e:
         logging.error(f"Error in /api/auction/bid: {e}")
@@ -758,7 +956,7 @@ async def list_auctions(request):
     try:
         async with aiosqlite.connect(DB_PATH) as db:
             async with db.execute(
-                """SELECT a.*, u.username, u.first_name 
+                """SELECT a.*, u.username, u.first_name, u.title 
                    FROM auctions a 
                    LEFT JOIN users u ON a.creator_id = u.user_id 
                    WHERE a.is_active = 1 AND a.end_time > datetime('now')
@@ -768,10 +966,11 @@ async def list_auctions(request):
         
         result = []
         for auction in auctions:
+            creator_name = auction[11] or auction[12] or str(auction[1])
             result.append({
                 'id': auction[0],
                 'creator_id': auction[1],
-                'creator_name': auction[11] or auction[12] or str(auction[1]),
+                'creator_name': creator_name,
                 'item_name': auction[2],
                 'item_description': auction[3],
                 'start_price': auction[4],
@@ -803,6 +1002,10 @@ async def websocket_handler(request):
                     if data.get('type') == 'auth':
                         user_id = data.get('user_id')
                         ws_clients.add(ws)
+                        await ws.send_json({
+                            'type': 'system',
+                            'message': '✅ Chatga ulandingiz!'
+                        })
                         
                     elif data.get('type') == 'chat' and user_id:
                         user = await get_user(int(user_id))
@@ -810,10 +1013,10 @@ async def websocket_handler(request):
                             chat_msg = {
                                 'type': 'chat',
                                 'user_id': user_id,
-                                'username': user[1],
-                                'first_name': user[2],
-                                'title': user[8],
-                                'color': user[9],
+                                'username': user[1] or user[2] or 'Anonim',
+                                'first_name': user[2] or 'Anonim',
+                                'title': user[8] or '🟢 Yangi oyinchi',
+                                'color': user[9] or '#00ff88',
                                 'message': data.get('message', '')[:500],
                                 'time': datetime.now().isoformat()
                             }
@@ -832,12 +1035,17 @@ async def websocket_handler(request):
                                 )
                                 await db.commit()
                                 
-                except json.JSONDecodeError:
-                    pass
+                except json.JSONDecodeError as e:
+                    logging.error(f"JSON decode error: {e}")
+                except Exception as e:
+                    logging.error(f"WebSocket message error: {e}")
                     
             elif msg.type == web.WSMsgType.ERROR:
+                logging.error(f"WebSocket error: {ws.exception()}")
                 break
                 
+    except Exception as e:
+        logging.error(f"WebSocket handler error: {e}")
     finally:
         if ws in ws_clients:
             ws_clients.remove(ws)
@@ -1065,8 +1273,6 @@ async def create_promo(message: types.Message):
     exp = int(args[2])
     days = int(args[3])
     
-    import random
-    import string
     code = ''.join(random.choices(string.ascii_uppercase + string.digits, k=8))
     expires_at = datetime.now() + timedelta(days=days)
     
