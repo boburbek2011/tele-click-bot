@@ -455,3 +455,49 @@ async def get_user_rank_total(user_id):
         ) as cursor:
             rank = await cursor.fetchone()
             return rank[0] if rank else None
+
+# ==================== ADMIN FUNCTIONS ====================
+
+async def search_users(query, limit=20):
+    """Foydalanuvchilarni username yoki first_name bo'yicha qidirish"""
+    async with aiosqlite.connect(DB_PATH) as db:
+        async with db.execute(
+            """SELECT user_id, username, first_name, last_name, coins, level, total_clicks 
+               FROM users 
+               WHERE username LIKE ? OR first_name LIKE ? OR last_name LIKE ? OR CAST(user_id AS TEXT) LIKE ?
+               ORDER BY coins DESC 
+               LIMIT ?""",
+            (f'%{query}%', f'%{query}%', f'%{query}%', f'%{query}%', limit)
+        ) as cursor:
+            return await cursor.fetchall()
+
+async def get_all_users(limit=50, offset=0):
+    """Barcha foydalanuvchilarni olish (pagination bilan)"""
+    async with aiosqlite.connect(DB_PATH) as db:
+        async with db.execute(
+            """SELECT user_id, username, first_name, last_name, coins, level, total_clicks, diamonds 
+               FROM users 
+               ORDER BY coins DESC 
+               LIMIT ? OFFSET ?""",
+            (limit, offset)
+        ) as cursor:
+            return await cursor.fetchall()
+
+async def get_total_users_count():
+    """Jami foydalanuvchilar soni"""
+    async with aiosqlite.connect(DB_PATH) as db:
+        async with db.execute("SELECT COUNT(*) FROM users") as cursor:
+            count = await cursor.fetchone()
+            return count[0] if count else 0
+
+async def admin_add_coins(user_id, amount):
+    """Admin tomonidan tanga qo'shish"""
+    await update_user_stats(user_id, coins_delta=amount)
+
+async def admin_add_exp(user_id, amount):
+    """Admin tomonidan EXP qo'shish"""
+    await update_user_stats(user_id, exp_delta=amount)
+
+async def admin_add_energy(user_id, amount):
+    """Admin tomonidan energiya qo'shish"""
+    await update_user_stats(user_id, energy_delta=amount)
