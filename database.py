@@ -5,7 +5,7 @@ DB_PATH = "tele_click.db"
 
 async def init_db():
     async with aiosqlite.connect(DB_PATH) as db:
-        # Users table
+        # Users table - title ustunidagi apostrofni tuzatdim
         await db.execute('''
             CREATE TABLE IF NOT EXISTS users (
                 user_id INTEGER PRIMARY KEY,
@@ -16,8 +16,8 @@ async def init_db():
                 exp INTEGER DEFAULT 0,
                 level INTEGER DEFAULT 1,
                 diamonds INTEGER DEFAULT 0,
-                title TEXT DEFAULT '🟢 Yangi o\'yinchi',
-                color TEXT DEFAULT '#00ff88',
+                title TEXT DEFAULT "🟢 Yangi oyinchi",
+                color TEXT DEFAULT "#00ff88",
                 total_clicks INTEGER DEFAULT 0,
                 registered_at TIMESTAMP DEFAULT CURRENT_TIMESTAMP
             )
@@ -157,23 +157,23 @@ async def get_top_users(limit=10):
 async def get_user_level(user_id):
     user = await get_user(user_id)
     if user:
-        return user[5]
+        return user[6]
     return 1
 
 async def get_user_exp(user_id):
     user = await get_user(user_id)
     if user:
-        return user[4]
+        return user[5]
     return 0
 
 async def get_user_coins(user_id):
     user = await get_user(user_id)
     if user:
-        return user[3]
+        return user[4]
     return 0
 
 async def get_user_diamonds(user_id):
     user = await get_user(user_id)
     if user:
-        return user[6]
+        return user[7]
     return 0
