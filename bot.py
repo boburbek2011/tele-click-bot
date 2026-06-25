@@ -1,1315 +1,1461 @@
-import sys
-import os
-os.environ["PYTHONHASHSEED"] = "0"
-os.environ["PYTHONIOENCODING"] = "utf-8"
+const tg = window.Telegram.WebApp;
+tg.expand();
 
-import asyncio
-import logging
-import json
-import random
-import string
-from datetime import datetime, timedelta
-import aiosqlite
-from aiohttp import web
-from aiogram import Bot, Dispatcher, types
-from aiogram.types import WebAppInfo, InlineKeyboardMarkup, InlineKeyboardButton
-from aiogram.filters import Command
+let userData = null;
+let ws = null;
+let isConnected = false;
+let autoClickerInterval = null;
+let adminUsers = [];
+let adminCurrentPage = 0;
+const ADMIN_USERS_PER_PAGE = 20;
 
-from config import BOT_TOKEN, ADMIN_IDS, WEBAPP_URL, DB_PATH
-from database import (
-    init_db, get_user, create_user, update_user_stats, 
-    refill_energy, get_shop_items, get_skins, get_user_skins, 
-    purchase_item, get_required_exp, get_user_total_multiplier,
-    get_leaderboard_current, get_leaderboard_total, get_user_rank_current, get_user_rank_total,
-    search_users, get_all_users, get_total_users_count,
-    admin_add_coins, admin_add_exp, admin_add_energy
-)
+// ==================== LOCAL STORAGE ====================
 
-logging.basicConfig(
-    level=logging.INFO,
-    format='%(asctime)s - %(name)s - %(levelname)s - %(message)s'
-)
+function saveToLocalStorage(data) {
+    try {
+        localStorage.setItem('teleClickData', JSON.stringify(data));
+        console.log('Data saved to localStorage');
+    } catch (e) {
+        console.error('Error saving to localStorage:', e);
+    }
+}
 
-bot = Bot(token=BOT_TOKEN)
-dp = Dispatcher()
+function loadFromLocalStorage() {
+    try {
+        const data = localStorage.getItem('teleClickData');
+        if (data) {
+            return JSON.parse(data);
+        }
+    } catch (e) {
+        console.error('Error loading from localStorage:', e);
+    }
+    return null;
+}
 
-# Web App server routes
-routes = web.RouteTableDef()
-ws_clients = set()
+// ==================== INITIALIZATION ====================
 
-# ==================== STATIC FILES ====================
-
-@routes.get('/')
-async def index(request):
-    return web.FileResponse('web_app/index.html')
-
-@routes.get('/style.css')
-async def style(request):
-    return web.FileResponse('web_app/style.css')
-
-@routes.get('/script.js')
-async def script(request):
-    return web.FileResponse('web_app/script.js')
-
-# ==================== USER API ====================
-
-@routes.get('/api/user')
-async def get_user_data(request):
-    try:
-        user_id = request.query.get('user_id')
-        if not user_id:
-            return web.json_response({'error': 'No user_id'}, status=400)
-        
-        user = await get_user(int(user_id))
-        if user:
-            return web.json_response({
-                'user_id': user[0],
-                'username': user[1],
-                'first_name': user[2],
-                'last_name': user[3],
-                'coins': user[4],
-                'exp': user[5],
-                'level': user[6],
-                'diamonds': user[7],
-                'title': user[8],
-                'color': user[9],
-                'total_clicks': user[10],
-                'energy': user[11],
-                'max_energy': user[12],
-                'click_power': user[13],
-                'offline_mining': user[14],
-                'mining_rate': user[15],
-                'auto_clicker_level': user[17],
-                'active_skin_id': user[18],
-                'multiplier': user[19]
-            })
-        return web.json_response({'error': 'User not found'}, status=404)
-    except Exception as e:
-        logging.error(f"Error in /api/user GET: {e}")
-        return web.json_response({'error': str(e)}, status=500)
-
-@routes.post('/api/user')
-async def create_or_get_user(request):
-    try:
-        data = await request.json()
-        user_id = data.get('user_id')
-        if not user_id:
-            return web.json_response({'error': 'No user_id'}, status=400)
-        
-        user = await get_user(int(user_id))
-        if not user:
-            await create_user(int(user_id), "", "", "")
-            user = await get_user(int(user_id))
-        
-        if user:
-            return web.json_response({
-                'user_id': user[0],
-                'username': user[1],
-                'first_name': user[2],
-                'last_name': user[3],
-                'coins': user[4],
-                'exp': user[5],
-                'level': user[6],
-                'diamonds': user[7],
-                'title': user[8],
-                'color': user[9],
-                'total_clicks': user[10],
-                'energy': user[11],
-                'max_energy': user[12],
-                'click_power': user[13],
-                'offline_mining': user[14],
-                'mining_rate': user[15],
-                'auto_clicker_level': user[17],
-                'active_skin_id': user[18],
-                'multiplier': user[19]
-            })
-        return web.json_response({'error': 'User not found'}, status=404)
-    except Exception as e:
-        logging.error(f"Error in /api/user POST: {e}")
-        return web.json_response({'error': str(e)}, status=500)
-
-# ==================== CLICK API ====================
-
-@routes.post('/api/click')
-async def handle_click(request):
-    try:
-        data = await request.json()
-        user_id = data.get('user_id')
-        
-        if not user_id:
-            return web.json_response({'error': 'No user_id'}, status=400)
-        
-        await refill_energy(int(user_id))
-        
-        user = await get_user(int(user_id))
-        if not user:
-            return web.json_response({'error': 'User not found'}, status=404)
-        
-        if user[11] <= 0:
-            return web.json_response({
-                'success': False,
-                'error': 'Energiya tugadi! Kuting yoki shopdan sotib oling.'
-            }, status=400)
-        
-        click_power = user[13] or 1
-        total_multiplier = await get_user_total_multiplier(int(user_id))
-        exp_gain = random.randint(10, 20)
-        coins_gain = click_power * total_multiplier
-        
-        await update_user_stats(
-            int(user_id), 
-            coins_delta=coins_gain, 
-            exp_delta=exp_gain, 
-            clicks_delta=1,
-            energy_delta=-1
-        )
-        
-        user = await get_user(int(user_id))
-        level = user[6]
-        exp = user[5]
-        required_exp = await get_required_exp(level)
-        
-        leveled_up = False
-        while exp >= required_exp:
-            exp -= required_exp
-            level += 1
-            required_exp = await get_required_exp(level)
-            leveled_up = True
-        
-        if leveled_up:
-            await update_user_stats(int(user_id), level_update=level)
-            try:
-                await bot.send_message(
-                    int(user_id),
-                    f"🎉 **DARAJANGIZ OSHDI!**\n\n📊 Yangi daraja: **{level}**",
-                    parse_mode="Markdown"
-                )
-            except:
-                pass
-        
-        updated_user = await get_user(int(user_id))
-        
-        return web.json_response({
-            'success': True,
-            'coins': updated_user[4],
-            'exp': updated_user[5],
-            'level': updated_user[6],
-            'energy': updated_user[11],
-            'max_energy': updated_user[12],
-            'click_power': click_power,
-            'multiplier': total_multiplier,
-            'coins_gained': coins_gain,
-            'exp_gained': exp_gain,
-            'leveled_up': leveled_up
-        })
-    except Exception as e:
-        logging.error(f"Error in /api/click: {e}")
-        return web.json_response({'error': str(e)}, status=500)
-
-# ==================== TITLE API ====================
-
-@routes.post('/api/title')
-async def change_title(request):
-    try:
-        data = await request.json()
-        user_id = data.get('user_id')
-        title = data.get('title')
-        
-        if not user_id or not title:
-            return web.json_response({'error': 'Missing data'}, status=400)
-        
-        async with aiosqlite.connect(DB_PATH) as db:
-            await db.execute(
-                "UPDATE users SET title = ? WHERE user_id = ?",
-                (title, int(user_id))
-            )
-            await db.commit()
-        
-        return web.json_response({
-            'success': True,
-            'title': title
-        })
-    except Exception as e:
-        logging.error(f"Error in /api/title: {e}")
-        return web.json_response({'error': str(e)}, status=500)
-
-# ==================== DIAMOND API ====================
-
-@routes.post('/api/diamond')
-async def buy_diamond(request):
-    try:
-        data = await request.json()
-        user_id = data.get('user_id')
-        
-        if not user_id:
-            return web.json_response({'error': 'No user_id'}, status=400)
-        
-        user = await get_user(int(user_id))
-        if not user or user[4] < 1500000:
-            return web.json_response({'error': 'Not enough coins'}, status=400)
-        
-        await update_user_stats(int(user_id), coins_delta=-1500000)
-        
-        async with aiosqlite.connect(DB_PATH) as db:
-            await db.execute(
-                "UPDATE users SET diamonds = diamonds + 1 WHERE user_id = ?",
-                (int(user_id),)
-            )
-            await db.commit()
-        
-        updated_user = await get_user(int(user_id))
-        return web.json_response({
-            'success': True,
-            'coins': updated_user[4],
-            'diamonds': updated_user[7]
-        })
-    except Exception as e:
-        logging.error(f"Error in /api/diamond: {e}")
-        return web.json_response({'error': str(e)}, status=500)
-
-# ==================== SEND COINS API ====================
-
-@routes.post('/api/send')
-async def send_coins(request):
-    try:
-        data = await request.json()
-        user_id = data.get('user_id')
-        target_id = data.get('target')
-        amount = data.get('amount')
-        
-        if not all([user_id, target_id, amount]):
-            return web.json_response({'error': 'Missing data'}, status=400)
-        
-        user = await get_user(int(user_id))
-        if not user or user[4] < amount:
-            return web.json_response({'error': 'Not enough coins'}, status=400)
-        
-        target = await get_user(int(target_id))
-        if not target:
-            return web.json_response({'error': 'Target user not found'}, status=404)
-        
-        await update_user_stats(int(user_id), coins_delta=-amount)
-        await update_user_stats(int(target_id), coins_delta=amount)
-        
-        updated_user = await get_user(int(user_id))
-        return web.json_response({
-            'success': True,
-            'coins': updated_user[4]
-        })
-    except Exception as e:
-        logging.error(f"Error in /api/send: {e}")
-        return web.json_response({'error': str(e)}, status=500)
-
-# ==================== PROMO API ====================
-
-@routes.post('/api/promo')
-async def redeem_promo(request):
-    try:
-        data = await request.json()
-        user_id = data.get('user_id')
-        code = data.get('code')
-        
-        if not user_id or not code:
-            return web.json_response({'error': 'Missing data'}, status=400)
-        
-        async with aiosqlite.connect(DB_PATH) as db:
-            async with db.execute(
-                "SELECT * FROM promo_codes WHERE code = ? AND expires_at > datetime('now')",
-                (code.upper(),)
-            ) as cursor:
-                promo = await cursor.fetchone()
-            
-            if not promo:
-                return web.json_response({'error': 'Invalid or expired promo code'}, status=400)
-            
-            async with db.execute(
-                "SELECT * FROM promo_usage WHERE user_id = ? AND promo_id = ?",
-                (int(user_id), promo[0])
-            ) as cursor:
-                used = await cursor.fetchone()
-            
-            if used:
-                return web.json_response({'error': 'Promo code already used'}, status=400)
-            
-            added_coins = promo[2]
-            added_exp = promo[3]
-            
-            await update_user_stats(int(user_id), coins_delta=added_coins, exp_delta=added_exp)
-            
-            await db.execute(
-                "INSERT INTO promo_usage (user_id, promo_id) VALUES (?, ?)",
-                (int(user_id), promo[0])
-            )
-            await db.commit()
-        
-        updated_user = await get_user(int(user_id))
-        return web.json_response({
-            'success': True,
-            'coins': updated_user[4],
-            'exp': updated_user[5],
-            'added_coins': added_coins,
-            'added_exp': added_exp
-        })
-    except Exception as e:
-        logging.error(f"Error in /api/promo: {e}")
-        return web.json_response({'error': str(e)}, status=500)
-
-# ==================== SHOP API ====================
-
-@routes.get('/api/shop/items')
-async def get_shop_items_api(request):
-    try:
-        items = await get_shop_items()
-        result = []
-        for item in items:
-            result.append({
-                'id': item[0],
-                'name': item[1],
-                'description': item[2],
-                'category': item[3],
-                'price': item[4],
-                'level_required': item[5],
-                'effect_type': item[6],
-                'effect_value': item[7],
-                'emoji': item[8]
-            })
-        return web.json_response(result)
-    except Exception as e:
-        logging.error(f"Error in /api/shop/items: {e}")
-        return web.json_response({'error': str(e)}, status=500)
-
-@routes.post('/api/shop/buy')
-async def buy_shop_item(request):
-    try:
-        data = await request.json()
-        user_id = data.get('user_id')
-        item_id = data.get('item_id')
-        
-        if not user_id or not item_id:
-            return web.json_response({'error': 'Missing data'}, status=400)
-        
-        user = await get_user(int(user_id))
-        if not user:
-            return web.json_response({'error': 'User not found'}, status=404)
-        
-        async with aiosqlite.connect(DB_PATH) as db:
-            async with db.execute(
-                "SELECT * FROM shop_items WHERE id = ? AND is_available = 1",
-                (int(item_id),)
-            ) as cursor:
-                item = await cursor.fetchone()
-        
-        if not item:
-            return web.json_response({'error': 'Item not found'}, status=404)
-        
-        if user[6] < item[4]:
-            return web.json_response({
-                'error': f'Bu narsa uchun {item[4]}-daraja kerak! Sizda: {user[6]}'
-            }, status=400)
-        
-        if user[4] < item[3]:
-            return web.json_response({
-                'error': f'Yetarli tanga yo\'q! Kerak: {item[3]}, Sizda: {user[4]}'
-            }, status=400)
-        
-        effect_type = item[5]
-        effect_value = item[6]
-        
-        if effect_type == 'max_energy':
-            await update_user_stats(int(user_id), max_energy_delta=effect_value, coins_delta=-item[3])
-        elif effect_type == 'click_power':
-            await update_user_stats(int(user_id), click_power_delta=effect_value, coins_delta=-item[3])
-        elif effect_type == 'auto_clicker':
-            await update_user_stats(int(user_id), auto_clicker_delta=effect_value, coins_delta=-item[3])
-        elif effect_type == 'offline_mining':
-            async with aiosqlite.connect(DB_PATH) as db:
-                await db.execute(
-                    "UPDATE users SET offline_mining = 1, mining_rate = mining_rate + ? WHERE user_id = ?",
-                    (effect_value, int(user_id))
-                )
-                await db.commit()
-            await update_user_stats(int(user_id), coins_delta=-item[3])
-        elif effect_type == 'multiplier':
-            end_time = datetime.now() + timedelta(minutes=30)
-            async with aiosqlite.connect(DB_PATH) as db:
-                await db.execute(
-                    "UPDATE users SET multiplier = ?, multiplier_end_time = ? WHERE user_id = ?",
-                    (effect_value, end_time.isoformat(), int(user_id))
-                )
-                await db.commit()
-            await update_user_stats(int(user_id), coins_delta=-item[3])
-        
-        await purchase_item(int(user_id), int(item_id))
-        
-        updated_user = await get_user(int(user_id))
-        
-        return web.json_response({
-            'success': True,
-            'coins': updated_user[4],
-            'max_energy': updated_user[12],
-            'click_power': updated_user[13],
-            'auto_clicker_level': updated_user[17],
-            'message': f'✅ {item[1]} sotib olindi!'
-        })
-    except Exception as e:
-        logging.error(f"Error in /api/shop/buy: {e}")
-        return web.json_response({'error': str(e)}, status=500)
-
-# ==================== SKINS API ====================
-
-@routes.get('/api/skins')
-async def get_skins_api(request):
-    try:
-        skins = await get_skins()
-        result = []
-        for skin in skins:
-            result.append({
-                'id': skin[0],
-                'name': skin[1],
-                'emoji': skin[2],
-                'rarity': skin[3],
-                'level_required': skin[4],
-                'price': skin[5],
-                'multiplier': skin[6]
-            })
-        return web.json_response(result)
-    except Exception as e:
-        logging.error(f"Error in /api/skins: {e}")
-        return web.json_response({'error': str(e)}, status=500)
-
-@routes.post('/api/skin/buy')
-async def buy_skin(request):
-    try:
-        data = await request.json()
-        user_id = data.get('user_id')
-        skin_id = data.get('skin_id')
-        
-        if not user_id or not skin_id:
-            return web.json_response({'error': 'Missing data'}, status=400)
-        
-        user = await get_user(int(user_id))
-        if not user:
-            return web.json_response({'error': 'User not found'}, status=404)
-        
-        async with aiosqlite.connect(DB_PATH) as db:
-            async with db.execute(
-                "SELECT * FROM skins WHERE id = ? AND is_available = 1",
-                (int(skin_id),)
-            ) as cursor:
-                skin = await cursor.fetchone()
-        
-        if not skin:
-            return web.json_response({'error': 'Skin not found'}, status=404)
-        
-        if user[6] < skin[3]:
-            return web.json_response({
-                'error': f'Bu skin uchun {skin[3]}-daraja kerak! Sizda: {user[6]}'
-            }, status=400)
-        
-        if user[4] < skin[4]:
-            return web.json_response({
-                'error': f'Yetarli tanga yo\'q! Kerak: {skin[4]}, Sizda: {user[4]}'
-            }, status=400)
-        
-        async with aiosqlite.connect(DB_PATH) as db:
-            async with db.execute(
-                "SELECT * FROM user_skins WHERE user_id = ? AND skin_id = ?",
-                (int(user_id), int(skin_id))
-            ) as cursor:
-                existing = await cursor.fetchone()
-        
-        if existing:
-            return web.json_response({'error': 'Sizda bu skin allaqachon bor!'}, status=400)
-        
-        async with aiosqlite.connect(DB_PATH) as db:
-            await db.execute(
-                "INSERT INTO user_skins (user_id, skin_id) VALUES (?, ?)",
-                (int(user_id), int(skin_id))
-            )
-            await db.commit()
-        
-        await update_user_stats(int(user_id), coins_delta=-skin[4])
-        
-        updated_user = await get_user(int(user_id))
-        
-        return web.json_response({
-            'success': True,
-            'coins': updated_user[4],
-            'message': f'✅ {skin[1]} skin sotib olindi!'
-        })
-    except Exception as e:
-        logging.error(f"Error in /api/skin/buy: {e}")
-        return web.json_response({'error': str(e)}, status=500)
-
-@routes.post('/api/skin/activate')
-async def activate_skin(request):
-    try:
-        data = await request.json()
-        user_id = data.get('user_id')
-        skin_id = data.get('skin_id')
-        
-        if not user_id or not skin_id:
-            return web.json_response({'error': 'Missing data'}, status=400)
-        
-        async with aiosqlite.connect(DB_PATH) as db:
-            async with db.execute(
-                "SELECT * FROM user_skins WHERE user_id = ? AND skin_id = ?",
-                (int(user_id), int(skin_id))
-            ) as cursor:
-                skin = await cursor.fetchone()
-        
-        if not skin:
-            return web.json_response({'error': 'Sizda bu skin yo\'q!'}, status=400)
-        
-        async with aiosqlite.connect(DB_PATH) as db:
-            await db.execute(
-                "UPDATE user_skins SET is_active = 0 WHERE user_id = ?",
-                (int(user_id),)
-            )
-            await db.execute(
-                "UPDATE user_skins SET is_active = 1 WHERE user_id = ? AND skin_id = ?",
-                (int(user_id), int(skin_id))
-            )
-            await db.execute(
-                "UPDATE users SET active_skin_id = ? WHERE user_id = ?",
-                (int(skin_id), int(user_id))
-            )
-            await db.commit()
-        
-        return web.json_response({
-            'success': True,
-            'message': '✅ Skin faollashtirildi!'
-        })
-    except Exception as e:
-        logging.error(f"Error in /api/skin/activate: {e}")
-        return web.json_response({'error': str(e)}, status=500)
-
-@routes.get('/api/user/skins')
-async def get_user_skins_api(request):
-    try:
-        user_id = request.query.get('user_id')
-        if not user_id:
-            return web.json_response({'error': 'No user_id'}, status=400)
-        
-        skins = await get_user_skins(int(user_id))
-        result = []
-        for skin in skins:
-            result.append({
-                'skin_id': skin[0],
-                'is_active': skin[1]
-            })
-        return web.json_response(result)
-    except Exception as e:
-        logging.error(f"Error in /api/user/skins: {e}")
-        return web.json_response({'error': str(e)}, status=500)
-
-# ==================== LEADERBOARD API ====================
-
-@routes.get('/api/leaderboard/current')
-async def get_leaderboard_current_api(request):
-    try:
-        limit = request.query.get('limit', 10)
-        try:
-            limit = int(limit)
-        except:
-            limit = 10
-        
-        leaders = await get_leaderboard_current(limit)
-        result = []
-        for i, user in enumerate(leaders, 1):
-            name = user[1] or user[2] or f"ID:{user[0]}"
-            result.append({
-                'rank': i,
-                'user_id': user[0],
-                'name': name,
-                'coins': user[3],
-                'level': user[4],
-                'clicks': user[5]
-            })
-        return web.json_response(result)
-    except Exception as e:
-        logging.error(f"Error in /api/leaderboard/current: {e}")
-        return web.json_response({'error': str(e)}, status=500)
-
-@routes.get('/api/leaderboard/total')
-async def get_leaderboard_total_api(request):
-    try:
-        limit = request.query.get('limit', 10)
-        try:
-            limit = int(limit)
-        except:
-            limit = 10
-        
-        leaders = await get_leaderboard_total(limit)
-        result = []
-        for i, user in enumerate(leaders, 1):
-            name = user[1] or user[2] or f"ID:{user[0]}"
-            result.append({
-                'rank': i,
-                'user_id': user[0],
-                'name': name,
-                'total_clicks': user[3],
-                'coins': user[4],
-                'level': user[5]
-            })
-        return web.json_response(result)
-    except Exception as e:
-        logging.error(f"Error in /api/leaderboard/total: {e}")
-        return web.json_response({'error': str(e)}, status=500)
-
-@routes.get('/api/leaderboard/rank')
-async def get_user_rank_api(request):
-    try:
-        user_id = request.query.get('user_id')
-        if not user_id:
-            return web.json_response({'error': 'No user_id'}, status=400)
-        
-        current_rank = await get_user_rank_current(int(user_id))
-        total_rank = await get_user_rank_total(int(user_id))
-        
-        return web.json_response({
-            'current_rank': current_rank,
-            'total_rank': total_rank
-        })
-    except Exception as e:
-        logging.error(f"Error in /api/leaderboard/rank: {e}")
-        return web.json_response({'error': str(e)}, status=500)
-
-# ==================== ADMIN API (Web App) ====================
-
-@routes.get('/api/admin/users')
-async def admin_get_users(request):
-    try:
-        user_id = request.query.get('user_id')
-        if not user_id:
-            return web.json_response({'error': 'No user_id'}, status=400)
-        
-        if int(user_id) not in ADMIN_IDS:
-            return web.json_response({'error': 'Unauthorized'}, status=403)
-        
-        limit = request.query.get('limit', 50)
-        offset = request.query.get('offset', 0)
-        try:
-            limit = int(limit)
-            offset = int(offset)
-        except:
-            limit = 50
-            offset = 0
-        
-        users = await get_all_users(limit, offset)
-        total = await get_total_users_count()
-        
-        result = []
-        for user in users:
-            result.append({
-                'user_id': user[0],
-                'username': user[1] or 'No username',
-                'first_name': user[2] or 'No name',
-                'last_name': user[3] or '',
-                'coins': user[4],
-                'level': user[5],
-                'total_clicks': user[6],
-                'diamonds': user[7]
-            })
-        
-        return web.json_response({
-            'users': result,
-            'total': total,
-            'limit': limit,
-            'offset': offset
-        })
-    except Exception as e:
-        logging.error(f"Error in /api/admin/users: {e}")
-        return web.json_response({'error': str(e)}, status=500)
-
-@routes.post('/api/admin/search')
-async def admin_search_users(request):
-    try:
-        data = await request.json()
-        user_id = data.get('user_id')
-        query = data.get('query', '')
-        
-        if not user_id:
-            return web.json_response({'error': 'No user_id'}, status=400)
-        
-        if int(user_id) not in ADMIN_IDS:
-            return web.json_response({'error': 'Unauthorized'}, status=403)
-        
-        if not query or len(query) < 2:
-            return web.json_response({'error': 'Query too short'}, status=400)
-        
-        users = await search_users(query)
-        
-        result = []
-        for user in users:
-            result.append({
-                'user_id': user[0],
-                'username': user[1] or 'No username',
-                'first_name': user[2] or 'No name',
-                'last_name': user[3] or '',
-                'coins': user[4],
-                'level': user[5],
-                'total_clicks': user[6]
-            })
-        
-        return web.json_response({
-            'users': result,
-            'query': query,
-            'count': len(result)
-        })
-    except Exception as e:
-        logging.error(f"Error in /api/admin/search: {e}")
-        return web.json_response({'error': str(e)}, status=500)
-
-@routes.post('/api/admin/add_coins')
-async def admin_add_coins_api(request):
-    try:
-        data = await request.json()
-        admin_id = data.get('admin_id')
-        target_id = data.get('target_id')
-        amount = data.get('amount')
-        
-        if not all([admin_id, target_id, amount]):
-            return web.json_response({'error': 'Missing data'}, status=400)
-        
-        if int(admin_id) not in ADMIN_IDS:
-            return web.json_response({'error': 'Unauthorized'}, status=403)
-        
-        await admin_add_coins(int(target_id), int(amount))
-        
-        user = await get_user(int(target_id))
-        return web.json_response({
-            'success': True,
-            'user_id': target_id,
-            'new_coins': user[4] if user else 0,
-            'message': f'✅ {target_id} ga {amount} tanga qo\'shildi!'
-        })
-    except Exception as e:
-        logging.error(f"Error in /api/admin/add_coins: {e}")
-        return web.json_response({'error': str(e)}, status=500)
-
-@routes.post('/api/admin/add_exp')
-async def admin_add_exp_api(request):
-    try:
-        data = await request.json()
-        admin_id = data.get('admin_id')
-        target_id = data.get('target_id')
-        amount = data.get('amount')
-        
-        if not all([admin_id, target_id, amount]):
-            return web.json_response({'error': 'Missing data'}, status=400)
-        
-        if int(admin_id) not in ADMIN_IDS:
-            return web.json_response({'error': 'Unauthorized'}, status=403)
-        
-        await admin_add_exp(int(target_id), int(amount))
-        
-        user = await get_user(int(target_id))
-        return web.json_response({
-            'success': True,
-            'user_id': target_id,
-            'new_exp': user[5] if user else 0,
-            'message': f'✅ {target_id} ga {amount} EXP qo\'shildi!'
-        })
-    except Exception as e:
-        logging.error(f"Error in /api/admin/add_exp: {e}")
-        return web.json_response({'error': str(e)}, status=500)
-
-@routes.post('/api/admin/add_energy')
-async def admin_add_energy_api(request):
-    try:
-        data = await request.json()
-        admin_id = data.get('admin_id')
-        target_id = data.get('target_id')
-        amount = data.get('amount')
-        
-        if not all([admin_id, target_id, amount]):
-            return web.json_response({'error': 'Missing data'}, status=400)
-        
-        if int(admin_id) not in ADMIN_IDS:
-            return web.json_response({'error': 'Unauthorized'}, status=403)
-        
-        await admin_add_energy(int(target_id), int(amount))
-        
-        user = await get_user(int(target_id))
-        return web.json_response({
-            'success': True,
-            'user_id': target_id,
-            'new_energy': user[11] if user else 0,
-            'message': f'✅ {target_id} ga {amount} energiya qo\'shildi!'
-        })
-    except Exception as e:
-        logging.error(f"Error in /api/admin/add_energy: {e}")
-        return web.json_response({'error': str(e)}, status=500)
-
-# ==================== AUCTION API ====================
-
-@routes.post('/api/auction/create')
-async def create_auction(request):
-    try:
-        data = await request.json()
-        user_id = data.get('user_id')
-        name = data.get('name')
-        desc = data.get('desc')
-        price = data.get('price')
-        duration = data.get('duration')
-        
-        logging.info(f"Creating auction: user_id={user_id}, name={name}, price={price}")
-        
-        if not all([user_id, name, desc, price, duration]):
-            return web.json_response({'error': 'Missing data'}, status=400)
-        
-        user = await get_user(int(user_id))
-        if not user:
-            return web.json_response({'error': 'User not found'}, status=404)
-        
-        if user[4] < int(price):
-            return web.json_response({'error': 'Not enough coins to create auction'}, status=400)
-        
-        await update_user_stats(int(user_id), coins_delta=-int(price))
-        
-        end_time = datetime.now() + timedelta(minutes=int(duration))
-        
-        async with aiosqlite.connect(DB_PATH) as db:
-            cursor = await db.execute(
-                """INSERT INTO auctions 
-                   (creator_id, item_name, item_description, start_price, current_bid, end_time) 
-                   VALUES (?, ?, ?, ?, ?, ?)""",
-                (int(user_id), name, desc, int(price), int(price), end_time.isoformat())
-            )
-            await db.commit()
-            auction_id = cursor.lastrowid
-        
-        updated_user = await get_user(int(user_id))
-        
-        return web.json_response({
-            'success': True,
-            'auction_id': auction_id,
-            'coins': updated_user[4],
-            'message': f'✅ Auktsion yaratildi! ID: {auction_id}'
-        })
-    except Exception as e:
-        logging.error(f"Error in /api/auction/create: {e}")
-        return web.json_response({'error': str(e)}, status=500)
-
-@routes.post('/api/auction/bid')
-async def place_bid(request):
-    try:
-        data = await request.json()
-        user_id = data.get('user_id')
-        auction_id = data.get('auction_id')
-        amount = data.get('amount')
-        
-        logging.info(f"Placing bid: user_id={user_id}, auction_id={auction_id}, amount={amount}")
-        
-        if not all([user_id, auction_id, amount]):
-            return web.json_response({'error': 'Missing data'}, status=400)
-        
-        user = await get_user(int(user_id))
-        if not user:
-            return web.json_response({'error': 'User not found'}, status=404)
-        
-        if user[4] < amount:
-            return web.json_response({'error': 'Not enough coins'}, status=400)
-        
-        async with aiosqlite.connect(DB_PATH) as db:
-            async with db.execute(
-                "SELECT * FROM auctions WHERE id = ? AND is_active = 1 AND end_time > datetime('now')",
-                (int(auction_id),)
-            ) as cursor:
-                auction = await cursor.fetchone()
-            
-            if not auction:
-                return web.json_response({'error': 'Auction not found or ended'}, status=404)
-            
-            if amount <= auction[5]:
-                return web.json_response({'error': f'Bid must be higher than {auction[5]}'}, status=400)
-            
-            if auction[6] and auction[6] > 0:
-                await update_user_stats(int(auction[6]), coins_delta=auction[5])
-            
-            await db.execute(
-                "UPDATE auctions SET current_bid = ?, current_bidder_id = ? WHERE id = ?",
-                (amount, int(user_id), int(auction_id))
-            )
-            
-            await db.execute(
-                "INSERT INTO auction_bids (auction_id, user_id, bid_amount) VALUES (?, ?, ?)",
-                (int(auction_id), int(user_id), amount)
-            )
-            await db.commit()
-        
-        await update_user_stats(int(user_id), coins_delta=-amount)
-        updated_user = await get_user(int(user_id))
-        
-        return web.json_response({
-            'success': True,
-            'coins': updated_user[4],
-            'message': f'✅ Taklif qabul qilindi! Yangi narx: {amount}'
-        })
-    except Exception as e:
-        logging.error(f"Error in /api/auction/bid: {e}")
-        return web.json_response({'error': str(e)}, status=500)
-
-@routes.get('/api/auctions')
-async def list_auctions(request):
-    try:
-        async with aiosqlite.connect(DB_PATH) as db:
-            async with db.execute(
-                """SELECT a.*, u.username, u.first_name, u.title 
-                   FROM auctions a 
-                   LEFT JOIN users u ON a.creator_id = u.user_id 
-                   WHERE a.is_active = 1 AND a.end_time > datetime('now')
-                   ORDER BY a.created_at DESC LIMIT 20"""
-            ) as cursor:
-                auctions = await cursor.fetchall()
-        
-        result = []
-        for auction in auctions:
-            creator_name = auction[11] or auction[12] or str(auction[1])
-            result.append({
-                'id': auction[0],
-                'creator_id': auction[1],
-                'creator_name': creator_name,
-                'item_name': auction[2],
-                'item_description': auction[3],
-                'start_price': auction[4],
-                'current_bid': auction[5],
-                'current_bidder_id': auction[6],
-                'end_time': auction[7]
-            })
-        
-        return web.json_response(result)
-    except Exception as e:
-        logging.error(f"Error in /api/auctions: {e}")
-        return web.json_response({'error': str(e)}, status=500)
-
-# ==================== WEBSOCKET ====================
-
-@routes.get('/ws')
-async def websocket_handler(request):
-    ws = web.WebSocketResponse()
-    await ws.prepare(request)
+document.addEventListener('DOMContentLoaded', () => {
+    const urlParams = new URLSearchParams(window.location.search);
+    const userId = urlParams.get('user_id');
     
-    user_id = None
+    if (userId) {
+        const savedData = loadFromLocalStorage();
+        if (savedData && savedData.user_id == userId) {
+            console.log('Loading data from localStorage');
+            userData = savedData;
+            updateUI(userData);
+            loadUserData(userId);
+        } else {
+            loadUserData(userId);
+        }
+    } else {
+        alert('❌ Xatolik: Foydalanuvchi ID topilmadi!');
+    }
     
-    try:
-        async for msg in ws:
-            if msg.type == web.WSMsgType.TEXT:
-                try:
-                    data = json.loads(msg.data)
-                    
-                    if data.get('type') == 'auth':
-                        user_id = data.get('user_id')
-                        ws_clients.add(ws)
-                        await ws.send_json({
-                            'type': 'system',
-                            'message': '✅ Chatga ulandingiz!'
-                        })
-                        
-                    elif data.get('type') == 'chat' and user_id:
-                        user = await get_user(int(user_id))
-                        if user:
-                            chat_msg = {
-                                'type': 'chat',
-                                'user_id': user_id,
-                                'username': user[1] or user[2] or 'Anonim',
-                                'first_name': user[2] or 'Anonim',
-                                'title': user[8] or '🟢 Yangi oyinchi',
-                                'color': user[9] or '#00ff88',
-                                'message': data.get('message', '')[:500],
-                                'time': datetime.now().isoformat()
-                            }
-                            
-                            for client in list(ws_clients):
-                                if not client.closed:
-                                    try:
-                                        await client.send_json(chat_msg)
-                                    except:
-                                        pass
-                            
-                            async with aiosqlite.connect(DB_PATH) as db:
-                                await db.execute(
-                                    "INSERT INTO chat_messages (user_id, message) VALUES (?, ?)",
-                                    (int(user_id), chat_msg['message'])
-                                )
-                                await db.commit()
-                                
-                except json.JSONDecodeError as e:
-                    logging.error(f"JSON decode error: {e}")
-                except Exception as e:
-                    logging.error(f"WebSocket message error: {e}")
-                    
-            elif msg.type == web.WSMsgType.ERROR:
-                logging.error(f"WebSocket error: {ws.exception()}")
-                break
+    setupWebSocket();
+    setupClicker();
+    setupTabs();
+    setupShop();
+    setupSkins();
+    setupChat();
+    setupLeaderboard();
+    setupAdmin();
+});
+
+// ==================== USER DATA ====================
+
+function loadUserData(userId) {
+    fetch(`/api/user?user_id=${userId}`)
+        .then(res => res.json())
+        .then(data => {
+            if (data.error) {
+                fetch('/api/user', {
+                    method: 'POST',
+                    headers: { 'Content-Type': 'application/json' },
+                    body: JSON.stringify({ user_id: parseInt(userId) })
+                })
+                .then(res => res.json())
+                .then(newData => {
+                    if (newData.error) {
+                        alert('❌ Xatolik: ' + newData.error);
+                        return;
+                    }
+                    userData = newData;
+                    userData.user_id = parseInt(userId);
+                    updateUI(userData);
+                    saveToLocalStorage(userData);
+                    loadShop();
+                    loadSkins();
+                    loadUserSkins();
+                    startAutoClicker();
+                    checkAdminAccess();
+                })
+                .catch(err => {
+                    console.error('Error creating user:', err);
+                    alert('❌ Xatolik yuz berdi!');
+                });
+                return;
+            }
+            
+            userData = data;
+            userData.user_id = parseInt(userId);
+            updateUI(data);
+            saveToLocalStorage(data);
+            loadShop();
+            loadSkins();
+            loadUserSkins();
+            startAutoClicker();
+            checkAdminAccess();
+        })
+        .catch(err => {
+            console.error('Error loading user data:', err);
+            const savedData = loadFromLocalStorage();
+            if (savedData) {
+                userData = savedData;
+                updateUI(userData);
+                alert('⚠️ Offline rejimda ishlayapsiz! Ma\'lumotlar yangilanmadi.');
+            } else {
+                alert('❌ Xatolik yuz berdi!');
+            }
+        });
+}
+
+function updateUI(data) {
+    // Stats
+    document.getElementById('coins').textContent = formatNumber(data.coins || 0);
+    document.getElementById('exp').textContent = formatNumber(data.exp || 0);
+    document.getElementById('level').textContent = data.level || 1;
+    document.getElementById('diamonds').textContent = data.diamonds || 0;
+    
+    // Energy
+    const energy = data.energy || 0;
+    const maxEnergy = data.max_energy || 500;
+    const energyPercent = (energy / maxEnergy) * 100;
+    document.getElementById('energyFill').style.width = Math.min(energyPercent, 100) + '%';
+    document.getElementById('energyText').textContent = `⚡ ${Math.floor(energy)} / ${maxEnergy}`;
+    
+    // Power info
+    document.getElementById('clickPower').textContent = data.click_power || 1;
+    document.getElementById('multiplierDisplay').textContent = (data.multiplier || 1) + 'x';
+    document.getElementById('autoLevel').textContent = data.auto_clicker_level || 0;
+    
+    // Click info
+    const clickPower = data.click_power || 1;
+    const multiplier = data.multiplier || 1;
+    const totalCoins = clickPower * multiplier;
+    document.getElementById('clickInfo').textContent = `+${totalCoins} coin, +10-20 exp`;
+    
+    // Profile
+    document.getElementById('profileCoins').textContent = formatNumber(data.coins || 0);
+    document.getElementById('profileExp').textContent = formatNumber(data.exp || 0);
+    document.getElementById('profileLevel').textContent = data.level || 1;
+    document.getElementById('profileDiamonds').textContent = data.diamonds || 0;
+    document.getElementById('profileClicks').textContent = formatNumber(data.total_clicks || 0);
+    document.getElementById('profileEnergy').textContent = Math.floor(data.energy || 0);
+    
+    const name = data.first_name || data.username || 'Foydalanuvchi';
+    document.getElementById('profileName').textContent = name;
+    document.getElementById('profileTitle').textContent = data.title || '🟢 Yangi o\'yinchi';
+    document.getElementById('profileTitle').style.color = data.color || '#00ff88';
+    
+    document.getElementById('user-name').textContent = name;
+    document.getElementById('user-title').textContent = data.title || '🟢 Yangi o\'yinchi';
+    document.getElementById('user-title').style.color = data.color || '#00ff88';
+    
+    // Progress bar
+    const level = data.level || 1;
+    const exp = data.exp || 0;
+    const requiredExp = getRequiredExp(level);
+    const nextRequiredExp = getRequiredExp(level + 1);
+    const progress = ((exp - requiredExp) / (nextRequiredExp - requiredExp)) * 100;
+    document.getElementById('levelProgress').style.width = Math.min(Math.max(progress, 0), 100) + '%';
+    document.getElementById('progressText').textContent = 
+        `${formatNumber(Math.max(0, exp - requiredExp))} / ${formatNumber(nextRequiredExp - requiredExp)} EXP`;
+    
+    saveToLocalStorage(data);
+}
+
+function formatNumber(num) {
+    if (num >= 1000000) return (num / 1000000).toFixed(1) + 'M';
+    if (num >= 1000) return (num / 1000).toFixed(1) + 'K';
+    return Math.floor(num).toString();
+}
+
+function getRequiredExp(level) {
+    if (level <= 5) return level * 100;
+    else if (level <= 10) return level * 200;
+    else if (level <= 15) return level * 300;
+    else if (level <= 20) return level * 500;
+    else return level * 800;
+}
+
+// ==================== ADMIN ACCESS ====================
+
+function checkAdminAccess() {
+    if (userData && userData.user_id) {
+        fetch(`/api/admin/users?user_id=${userData.user_id}&limit=1`)
+            .then(res => res.json())
+            .then(data => {
+                if (!data.error) {
+                    document.querySelector('.admin-tab').style.display = 'block';
+                }
+            })
+            .catch(() => {});
+    }
+}
+
+// ==================== TABS ====================
+
+function setupTabs() {
+    document.querySelectorAll('.nav-btn').forEach(btn => {
+        btn.addEventListener('click', () => {
+            document.querySelectorAll('.nav-btn').forEach(b => b.classList.remove('active'));
+            btn.classList.add('active');
+            document.querySelectorAll('.tab-content').forEach(t => t.classList.remove('active'));
+            document.getElementById('tab-' + btn.dataset.tab).classList.add('active');
+            
+            if (btn.dataset.tab === 'auction') {
+                refreshAuctions();
+            }
+            if (btn.dataset.tab === 'shop') {
+                loadShop();
+            }
+            if (btn.dataset.tab === 'skins') {
+                loadSkins();
+                loadUserSkins();
+            }
+            if (btn.dataset.tab === 'leaderboard') {
+                loadLeaderboard();
+            }
+            if (btn.dataset.tab === 'admin') {
+                adminLoadAllUsers();
+            }
+        });
+    });
+}
+
+// ==================== CLICKER ====================
+
+function setupClicker() {
+    const btn = document.getElementById('clickBtn');
+    let cooldown = false;
+    
+    btn.addEventListener('click', () => {
+        if (cooldown) return;
+        cooldown = true;
+        
+        btn.style.transform = 'scale(0.85)';
+        setTimeout(() => btn.style.transform = 'scale(1)', 100);
+        
+        createCoinAnimation(btn);
+        
+        fetch('/api/click', {
+            method: 'POST',
+            headers: { 'Content-Type': 'application/json' },
+            body: JSON.stringify({ user_id: userData.user_id })
+        })
+        .then(res => res.json())
+        .then(data => {
+            if (data.success) {
+                userData.coins = data.coins;
+                userData.exp = data.exp;
+                userData.level = data.level;
+                userData.energy = data.energy;
+                userData.max_energy = data.max_energy;
+                userData.click_power = data.click_power;
+                userData.multiplier = data.multiplier;
+                userData.total_clicks = (userData.total_clicks || 0) + 1;
+                updateUI(userData);
+                saveToLocalStorage(userData);
                 
-    except Exception as e:
-        logging.error(f"WebSocket handler error: {e}")
-    finally:
-        if ws in ws_clients:
-            ws_clients.remove(ws)
-    
-    return ws
+                if (data.leveled_up) {
+                    showLevelUp(data.level);
+                }
+            } else if (data.error) {
+                showError(data.error);
+            }
+        })
+        .catch(err => {
+            console.error('Click error:', err);
+            if (userData) {
+                userData.coins = (userData.coins || 0) + (userData.click_power || 1);
+                userData.exp = (userData.exp || 0) + 15;
+                userData.energy = (userData.energy || 0) - 1;
+                userData.total_clicks = (userData.total_clicks || 0) + 1;
+                updateUI(userData);
+                saveToLocalStorage(userData);
+                showError('⚠️ Offline rejim! Ma\'lumotlar mahalliy saqlandi.');
+            }
+        })
+        .finally(() => {
+            setTimeout(() => cooldown = false, 100);
+        });
+    });
+}
 
-# ==================== BOT COMMANDS ====================
+function createCoinAnimation(btn) {
+    const rect = btn.getBoundingClientRect();
+    const coin = document.createElement('div');
+    coin.className = 'coin-animation';
+    coin.textContent = '🪙';
+    coin.style.cssText = `
+        position: fixed;
+        left: ${rect.left + rect.width/2 - 20}px;
+        top: ${rect.top}px;
+        font-size: 36px;
+        pointer-events: none;
+        transition: all 0.8s ease-out;
+        z-index: 1000;
+    `;
+    document.body.appendChild(coin);
+    
+    setTimeout(() => {
+        coin.style.transform = 'translateY(-200px) rotate(360deg) scale(0.3)';
+        coin.style.opacity = '0';
+    }, 10);
+    
+    setTimeout(() => coin.remove(), 800);
+}
 
-@dp.message(Command("start"))
-async def start_command(message: types.Message):
-    user_id = message.from_user.id
-    username = message.from_user.username or ""
-    first_name = message.from_user.first_name or ""
-    last_name = message.from_user.last_name or ""
-    
-    await create_user(user_id, username, first_name, last_name)
-    
-    web_app = WebAppInfo(url=f"{WEBAPP_URL}?user_id={user_id}")
-    
-    keyboard_buttons = [
-        [InlineKeyboardButton(text="🚀 O'yinni ochish", web_app=web_app)]
-    ]
-    
-    if user_id in ADMIN_IDS:
-        keyboard_buttons.append([InlineKeyboardButton(text="👑 Admin panel", callback_data="admin_panel")])
-    
-    keyboard = InlineKeyboardMarkup(inline_keyboard=keyboard_buttons)
-    
-    await message.answer(
-        "🎮 **Tele Click Bot**\n\n"
-        "Salom! Bu o'yin orqali siz tanga yig'ib, darajangizni oshirishingiz mumkin.\n\n"
-        "📊 **Xususiyatlar:**\n"
-        "🪙 Tanga yig'ish\n"
-        "⭐ EXP va daraja oshirish\n"
-        "⚡ Energiya tizimi\n"
-        "💬 Global chat\n"
-        "🔨 Auktsionlar\n"
-        "💎 Olmoslar\n"
-        "🎁 Promokodlar\n"
-        "🏪 Do'kon\n"
-        "🎨 Skinlar\n"
-        "🏆 Reyting\n\n"
-        "🔽 Quyidagi tugmani bosing va o'yinni boshlang!",
-        reply_markup=keyboard,
-        parse_mode="Markdown"
-    )
+function showLevelUp(level) {
+    const popup = document.createElement('div');
+    popup.style.cssText = `
+        position: fixed;
+        top: 50%;
+        left: 50%;
+        transform: translate(-50%, -50%);
+        background: #1a1a1a;
+        border: 3px solid #ffaa00;
+        border-radius: 20px;
+        padding: 30px;
+        text-align: center;
+        z-index: 2000;
+        animation: fadeIn 0.5s;
+        max-width: 300px;
+    `;
+    popup.innerHTML = `
+        <div style="font-size: 60px;">🎉</div>
+        <h2 style="color: #ffaa00;">DARAJANGIZ OSHDI!</h2>
+        <p style="font-size: 32px; color: #00ff88;">${level}</p>
+        <button onclick="this.parentElement.remove()" style="
+            padding: 10px 30px;
+            border: none;
+            border-radius: 10px;
+            background: #00ff88;
+            color: #0a0a0a;
+            font-weight: bold;
+            font-size: 16px;
+            cursor: pointer;
+            margin-top: 10px;
+        ">YOPISH</button>
+    `;
+    document.body.appendChild(popup);
+    setTimeout(() => popup.remove(), 5000);
+}
 
-@dp.callback_query(lambda c: c.data == "admin_panel")
-async def admin_panel_callback(callback_query: types.CallbackQuery):
-    user_id = callback_query.from_user.id
-    
-    if user_id not in ADMIN_IDS:
-        await callback_query.answer("❌ Bu faqat adminlar uchun!", show_alert=True)
-        return
-    
-    await callback_query.message.answer(
-        "👑 **Admin panel**\n\n"
-        "🪙 /add_coins [user_id] [miqdor] - Tanga qo'shish\n"
-        "⭐ /add_exp [user_id] [miqdor] - EXP qo'shish\n"
-        "👤 /add_admin [user_id] - Admin qo'shish\n"
-        "❌ /remove_admin [user_id] - Admin o'chirish\n"
-        "📋 /list_users - Foydalanuvchilar ro'yxati\n"
-        "🎁 /create_promo [tanga] [exp] [kun] - Promokod yaratish\n"
-        "⚡ /add_energy [user_id] [miqdor] - Energiya qo'shish",
-        parse_mode="Markdown"
-    )
-    await callback_query.answer()
+function showError(message) {
+    const popup = document.createElement('div');
+    popup.style.cssText = `
+        position: fixed;
+        bottom: 20px;
+        left: 50%;
+        transform: translateX(-50%);
+        background: #ff4444;
+        color: #fff;
+        padding: 12px 20px;
+        border-radius: 10px;
+        z-index: 2000;
+        animation: fadeIn 0.3s;
+        max-width: 90%;
+        text-align: center;
+    `;
+    popup.textContent = '❌ ' + message;
+    document.body.appendChild(popup);
+    setTimeout(() => popup.remove(), 3000);
+}
 
-@dp.message(Command("admin"))
-async def admin_panel(message: types.Message):
-    user_id = message.from_user.id
-    
-    if user_id not in ADMIN_IDS:
-        await message.answer("❌ Bu faqat adminlar uchun!")
-        return
-    
-    await message.answer(
-        "👑 **Admin panel**\n\n"
-        "🪙 /add_coins [user_id] [miqdor] - Tanga qo'shish\n"
-        "⭐ /add_exp [user_id] [miqdor] - EXP qo'shish\n"
-        "👤 /add_admin [user_id] - Admin qo'shish\n"
-        "❌ /remove_admin [user_id] - Admin o'chirish\n"
-        "📋 /list_users - Foydalanuvchilar ro'yxati\n"
-        "🎁 /create_promo [tanga] [exp] [kun] - Promokod yaratish\n"
-        "⚡ /add_energy [user_id] [miqdor] - Energiya qo'shish",
-        parse_mode="Markdown"
-    )
+// ==================== AUTO CLICKER ====================
 
-@dp.message(Command("add_coins"))
-async def add_coins_admin(message: types.Message):
-    user_id = message.from_user.id
+function startAutoClicker() {
+    if (autoClickerInterval) {
+        clearInterval(autoClickerInterval);
+    }
     
-    if user_id not in ADMIN_IDS:
-        await message.answer("❌ Bu faqat adminlar uchun!")
-        return
-    
-    args = message.text.split()
-    if len(args) < 3:
-        await message.answer("❌ Ishlatish: /add_coins [user_id] [miqdor]")
-        return
-    
-    target_id = int(args[1])
-    amount = int(args[2])
-    
-    await update_user_stats(target_id, coins_delta=amount)
-    await message.answer(f"✅ {target_id} ga {amount} tanga qo'shildi!")
+    autoClickerInterval = setInterval(() => {
+        if (!userData) return;
+        
+        const autoLevel = userData.auto_clicker_level || 0;
+        if (autoLevel <= 0) return;
+        
+        for (let i = 0; i < autoLevel; i++) {
+            fetch('/api/click', {
+                method: 'POST',
+                headers: { 'Content-Type': 'application/json' },
+                body: JSON.stringify({ user_id: userData.user_id })
+            })
+            .then(res => res.json())
+            .then(data => {
+                if (data.success) {
+                    userData.coins = data.coins;
+                    userData.exp = data.exp;
+                    userData.level = data.level;
+                    userData.energy = data.energy;
+                    updateUI(userData);
+                    saveToLocalStorage(userData);
+                }
+            })
+            .catch(err => console.error('Auto click error:', err));
+        }
+    }, 10000);
+}
 
-@dp.message(Command("add_exp"))
-async def add_exp_admin(message: types.Message):
-    user_id = message.from_user.id
-    
-    if user_id not in ADMIN_IDS:
-        await message.answer("❌ Bu faqat adminlar uchun!")
-        return
-    
-    args = message.text.split()
-    if len(args) < 3:
-        await message.answer("❌ Ishlatish: /add_exp [user_id] [miqdor]")
-        return
-    
-    target_id = int(args[1])
-    amount = int(args[2])
-    
-    await update_user_stats(target_id, exp_delta=amount)
-    await message.answer(f"✅ {target_id} ga {amount} EXP qo'shildi!")
+// ==================== SHOP ====================
 
-@dp.message(Command("add_energy"))
-async def add_energy_admin(message: types.Message):
-    user_id = message.from_user.id
-    
-    if user_id not in ADMIN_IDS:
-        await message.answer("❌ Bu faqat adminlar uchun!")
-        return
-    
-    args = message.text.split()
-    if len(args) < 3:
-        await message.answer("❌ Ishlatish: /add_energy [user_id] [miqdor]")
-        return
-    
-    target_id = int(args[1])
-    amount = int(args[2])
-    
-    await update_user_stats(target_id, energy_delta=amount)
-    await message.answer(f"✅ {target_id} ga {amount} energiya qo'shildi!")
+function setupShop() {
+    document.querySelectorAll('.category-btn').forEach(btn => {
+        btn.addEventListener('click', () => {
+            document.querySelectorAll('.category-btn').forEach(b => b.classList.remove('active'));
+            btn.classList.add('active');
+            
+            const category = btn.dataset.category;
+            document.querySelectorAll('.shop-item').forEach(item => {
+                if (category === 'all' || item.dataset.category === category) {
+                    item.style.display = 'block';
+                } else {
+                    item.style.display = 'none';
+                }
+            });
+        });
+    });
+}
 
-@dp.message(Command("add_admin"))
-async def add_admin(message: types.Message):
-    user_id = message.from_user.id
-    
-    if user_id not in ADMIN_IDS:
-        await message.answer("❌ Bu faqat adminlar uchun!")
-        return
-    
-    args = message.text.split()
-    if len(args) < 2:
-        await message.answer("❌ Ishlatish: /add_admin [user_id]")
-        return
-    
-    new_admin = int(args[1])
-    if new_admin not in ADMIN_IDS:
-        ADMIN_IDS.append(new_admin)
-        await message.answer(f"✅ {new_admin} admin qo'shildi!")
-    else:
-        await message.answer(f"❌ {new_admin} allaqachon admin!")
+function loadShop() {
+    fetch('/api/shop/items')
+        .then(res => res.json())
+        .then(items => {
+            const container = document.getElementById('shopItems');
+            container.innerHTML = '';
+            
+            if (!items || items.length === 0) {
+                container.innerHTML = '<p style="text-align:center;color:#888;padding:20px;">🏪 Hozircha do\'konda hech narsa yo\'q</p>';
+                return;
+            }
+            
+            items.forEach(item => {
+                const div = document.createElement('div');
+                div.className = 'shop-item';
+                div.dataset.category = item.category;
+                
+                const levelReq = item.level_required > 1 ? `📊 ${item.level_required}-daraja` : '🆓 Hech qanday';
+                const isAvailable = userData && userData.level >= item.level_required;
+                const canAfford = userData && userData.coins >= item.price;
+                
+                div.innerHTML = `
+                    <div class="shop-item-emoji">${item.emoji}</div>
+                    <div class="shop-item-name">${item.name}</div>
+                    <div class="shop-item-desc">${item.description}</div>
+                    <div class="shop-item-price">💰 ${formatNumber(item.price)}</div>
+                    <div class="shop-item-level">${levelReq}</div>
+                    <button onclick="buyShopItem(${item.id})" 
+                            style="${!isAvailable ? 'opacity:0.5;cursor:not-allowed;' : ''}">
+                        ${isAvailable ? (canAfford ? 'Sotib olish' : '💰 Yetarli emas') : '🔒 Qulflangan'}
+                    </button>
+                `;
+                container.appendChild(div);
+            });
+        })
+        .catch(err => console.error('Error loading shop:', err));
+}
 
-@dp.message(Command("remove_admin"))
-async def remove_admin(message: types.Message):
-    user_id = message.from_user.id
+function buyShopItem(itemId) {
+    if (!userData) {
+        alert('❌ Iltimos, avval profilingizni yuklang!');
+        return;
+    }
     
-    if user_id not in ADMIN_IDS:
-        await message.answer("❌ Bu faqat adminlar uchun!")
-        return
-    
-    args = message.text.split()
-    if len(args) < 2:
-        await message.answer("❌ Ishlatish: /remove_admin [user_id]")
-        return
-    
-    remove_id = int(args[1])
-    if remove_id in ADMIN_IDS and remove_id != user_id:
-        ADMIN_IDS.remove(remove_id)
-        await message.answer(f"✅ {remove_id} admin o'chirildi!")
-    else:
-        await message.answer(f"❌ {remove_id} admin emas yoki o'zingizni o'chira olmaysiz!")
+    fetch('/api/shop/buy', {
+        method: 'POST',
+        headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify({
+            user_id: userData.user_id,
+            item_id: itemId
+        })
+    })
+    .then(res => res.json())
+    .then(data => {
+        if (data.success) {
+            userData.coins = data.coins;
+            userData.max_energy = data.max_energy;
+            userData.click_power = data.click_power;
+            userData.auto_clicker_level = data.auto_clicker_level;
+            updateUI(userData);
+            saveToLocalStorage(userData);
+            alert(data.message);
+            loadShop();
+        } else {
+            alert('❌ Xatolik: ' + data.error);
+        }
+    })
+    .catch(err => {
+        console.error('Error buying item:', err);
+        alert('❌ Xatolik yuz berdi!');
+    });
+}
 
-@dp.message(Command("list_users"))
-async def list_users_admin(message: types.Message):
-    user_id = message.from_user.id
-    
-    if user_id not in ADMIN_IDS:
-        await message.answer("❌ Bu faqat adminlar uchun!")
-        return
-    
-    async with aiosqlite.connect(DB_PATH) as db:
-        async with db.execute(
-            "SELECT user_id, username, first_name, coins, level FROM users ORDER BY coins DESC LIMIT 20"
-        ) as cursor:
-            users = await cursor.fetchall()
-    
-    if not users:
-        await message.answer("❌ Foydalanuvchilar topilmadi!")
-        return
-    
-    text = "👥 **Foydalanuvchilar ro'yxati:**\n\n"
-    for i, (uid, username, first_name, coins, level) in enumerate(users, 1):
-        name = username or first_name or str(uid)
-        text += f"{i}. {name} - 🪙{coins} - 📊{level}\n"
-    
-    await message.answer(text, parse_mode="Markdown")
+// ==================== SKINS ====================
 
-@dp.message(Command("create_promo"))
-async def create_promo(message: types.Message):
-    user_id = message.from_user.id
-    
-    if user_id not in ADMIN_IDS:
-        await message.answer("❌ Bu faqat adminlar uchun!")
-        return
-    
-    args = message.text.split()
-    if len(args) < 4:
-        await message.answer("❌ Ishlatish: /create_promo [tanga] [exp] [kun]")
-        return
-    
-    coins = int(args[1])
-    exp = int(args[2])
-    days = int(args[3])
-    
-    code = ''.join(random.choices(string.ascii_uppercase + string.digits, k=8))
-    expires_at = datetime.now() + timedelta(days=days)
-    
-    async with aiosqlite.connect(DB_PATH) as db:
-        await db.execute(
-            "INSERT INTO promo_codes (code, coins, exp, expires_at, created_by) VALUES (?, ?, ?, ?, ?)",
-            (code, coins, exp, expires_at.isoformat(), user_id)
-        )
-        await db.commit()
-    
-    await message.answer(
-        f"✅ Promokod yaratildi!\n\n"
-        f"📝 Kod: `{code}`\n"
-        f"🪙 Tanga: {coins}\n"
-        f"⭐ EXP: {exp}\n"
-        f"⏰ Tugaydi: {expires_at.strftime('%Y-%m-%d %H:%M')}",
-        parse_mode="Markdown"
-    )
+function setupSkins() {
+    document.querySelectorAll('.skin-filter-btn').forEach(btn => {
+        btn.addEventListener('click', () => {
+            document.querySelectorAll('.skin-filter-btn').forEach(b => b.classList.remove('active'));
+            btn.classList.add('active');
+            
+            const rarity = btn.dataset.rarity;
+            document.querySelectorAll('.skin-item').forEach(item => {
+                if (rarity === 'all' || item.dataset.rarity === rarity) {
+                    item.style.display = 'block';
+                } else {
+                    item.style.display = 'none';
+                }
+            });
+        });
+    });
+}
 
-# ==================== MAIN ====================
+function loadSkins() {
+    fetch('/api/skins')
+        .then(res => res.json())
+        .then(skins => {
+            const container = document.getElementById('skinList');
+            container.innerHTML = '';
+            
+            if (!skins || skins.length === 0) {
+                container.innerHTML = '<p style="text-align:center;color:#888;padding:20px;">🎨 Hozircha skinlar yo\'q</p>';
+                return;
+            }
+            
+            skins.forEach(skin => {
+                const div = document.createElement('div');
+                div.className = `skin-item ${skin.rarity}`;
+                div.dataset.rarity = skin.rarity;
+                
+                const isAvailable = userData && userData.level >= skin.level_required;
+                const canAfford = userData && userData.coins >= skin.price;
+                
+                const rarityColors = {
+                    'common': '#00ff88',
+                    'rare': '#4488ff',
+                    'epic': '#aa44ff',
+                    'legendary': '#ffaa00'
+                };
+                
+                div.innerHTML = `
+                    <div class="skin-emoji">${skin.emoji}</div>
+                    <div class="skin-name">${skin.name}</div>
+                    <div class="skin-rarity" style="color: ${rarityColors[skin.rarity]}">${skin.rarity.toUpperCase()}</div>
+                    <div class="skin-multiplier">${skin.multiplier}x multiplier</div>
+                    <div class="skin-level">📊 ${skin.level_required}-daraja</div>
+                    <div class="skin-price">💰 ${formatNumber(skin.price)}</div>
+                    <button onclick="buySkin(${skin.id})" 
+                            style="${!isAvailable ? 'opacity:0.5;cursor:not-allowed;' : ''}">
+                        ${isAvailable ? (canAfford ? 'Sotib olish' : '💰 Yetarli emas') : '🔒 Qulflangan'}
+                    </button>
+                `;
+                container.appendChild(div);
+            });
+            
+            loadUserSkins();
+        })
+        .catch(err => console.error('Error loading skins:', err));
+}
 
-async def main():
-    await init_db()
+function loadUserSkins() {
+    if (!userData) return;
     
-    if not os.path.exists('web_app'):
-        os.makedirs('web_app')
-    
-    app = web.Application()
-    app.add_routes(routes)
-    runner = web.AppRunner(app)
-    await runner.setup()
-    site = web.TCPSite(runner, '0.0.0.0', 8080)
-    await site.start()
-    
-    logging.info("Web App server started on port 8080")
-    
-    await dp.start_polling(bot)
+    fetch(`/api/user/skins?user_id=${userData.user_id}`)
+        .then(res => res.json())
+        .then(skins => {
+            document.querySelectorAll('.skin-item').forEach(item => {
+                const btn = item.querySelector('button');
+                if (!btn) return;
+                
+                const match = btn.getAttribute('onclick');
+                if (!match) return;
+                
+                const skinId = parseInt(match.match(/\d+/)[0]);
+                const owned = skins.find(s => s.skin_id === skinId);
+                
+                if (owned) {
+                    item.classList.add('owned');
+                    if (owned.is_active) {
+                        item.classList.add('active-skin');
+                        btn.textContent = '✅ Faol';
+                        btn.disabled = true;
+                        btn.style.opacity = '0.5';
+                    } else {
+                        btn.textContent = '👔 Kiymoq';
+                        btn.className = 'activate-btn';
+                        btn.disabled = false;
+                        btn.onclick = function() { activateSkin(skinId); };
+                    }
+                }
+            });
+        })
+        .catch(err => console.error('Error loading user skins:', err));
+}
 
-if __name__ == '__main__':
-    asyncio.run(main())
+function buySkin(skinId) {
+    if (!userData) {
+        alert('❌ Iltimos, avval profilingizni yuklang!');
+        return;
+    }
+    
+    fetch('/api/skin/buy', {
+        method: 'POST',
+        headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify({
+            user_id: userData.user_id,
+            skin_id: skinId
+        })
+    })
+    .then(res => res.json())
+    .then(data => {
+        if (data.success) {
+            userData.coins = data.coins;
+            updateUI(userData);
+            saveToLocalStorage(userData);
+            alert(data.message);
+            loadSkins();
+            loadUserSkins();
+        } else {
+            alert('❌ Xatolik: ' + data.error);
+        }
+    })
+    .catch(err => {
+        console.error('Error buying skin:', err);
+        alert('❌ Xatolik yuz berdi!');
+    });
+}
+
+function activateSkin(skinId) {
+    if (!userData) {
+        alert('❌ Iltimos, avval profilingizni yuklang!');
+        return;
+    }
+    
+    fetch('/api/skin/activate', {
+        method: 'POST',
+        headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify({
+            user_id: userData.user_id,
+            skin_id: skinId
+        })
+    })
+    .then(res => res.json())
+    .then(data => {
+        if (data.success) {
+            alert('✅ Skin faollashtirildi!');
+            loadSkins();
+            loadUserSkins();
+        } else {
+            alert('❌ Xatolik: ' + data.error);
+        }
+    })
+    .catch(err => {
+        console.error('Error activating skin:', err);
+        alert('❌ Xatolik yuz berdi!');
+    });
+}
+
+// ==================== PROFILE FUNCTIONS ====================
+
+function changeTitle() {
+    if (!userData) {
+        alert('❌ Iltimos, avval profilingizni yuklang!');
+        return;
+    }
+    const title = prompt('Yangi unvoningizni kiriting (emoji bilan):');
+    if (!title) return;
+    
+    fetch('/api/title', {
+        method: 'POST',
+        headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify({ 
+            user_id: userData.user_id,
+            title: title 
+        })
+    })
+    .then(res => res.json())
+    .then(data => {
+        if (data.success) {
+            userData.title = data.title;
+            updateUI(userData);
+            saveToLocalStorage(userData);
+            alert('✅ Unvon o\'zgartirildi!');
+        } else {
+            alert('❌ Xatolik: ' + data.error);
+        }
+    })
+    .catch(err => {
+        console.error('Error:', err);
+        alert('❌ Xatolik yuz berdi!');
+    });
+}
+
+function buyDiamond() {
+    if (!userData) {
+        alert('❌ Iltimos, avval profilingizni yuklang!');
+        return;
+    }
+    if (userData.coins < 1500000) {
+        alert(`❌ Yetarli tanga yo'q! 1.5 mln tanga kerak. Sizda: ${formatNumber(userData.coins)}`);
+        return;
+    }
+    
+    if (!confirm('💎 1.5 mln tangaga 1 ta olmos sotib olasizmi?')) return;
+    
+    fetch('/api/diamond', {
+        method: 'POST',
+        headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify({ user_id: userData.user_id })
+    })
+    .then(res => res.json())
+    .then(data => {
+        if (data.success) {
+            userData.coins = data.coins;
+            userData.diamonds = data.diamonds;
+            updateUI(userData);
+            saveToLocalStorage(userData);
+            alert('✅ Olmos sotib olindi!');
+        } else {
+            alert('❌ Xatolik: ' + data.error);
+        }
+    })
+    .catch(err => {
+        console.error('Error:', err);
+        alert('❌ Xatolik yuz berdi!');
+    });
+}
+
+function sendCoins() {
+    if (!userData) {
+        alert('❌ Iltimos, avval profilingizni yuklang!');
+        return;
+    }
+    const target = prompt('Tangani yubormoqchi bo\'lgan foydalanuvchi ID sini kiriting:');
+    if (!target) return;
+    const amount = parseInt(prompt('Nechta tanga yubormoqchisiz?'));
+    if (!amount || amount <= 0) return;
+    if (amount > userData.coins) {
+        alert('❌ Yetarli tanga yo\'q!');
+        return;
+    }
+    
+    fetch('/api/send', {
+        method: 'POST',
+        headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify({ 
+            user_id: userData.user_id,
+            target: parseInt(target), 
+            amount: amount 
+        })
+    })
+    .then(res => res.json())
+    .then(data => {
+        if (data.success) {
+            userData.coins = data.coins;
+            updateUI(userData);
+            saveToLocalStorage(userData);
+            alert('✅ Tanga yuborildi!');
+        } else {
+            alert('❌ Xatolik: ' + data.error);
+        }
+    })
+    .catch(err => {
+        console.error('Error:', err);
+        alert('❌ Xatolik yuz berdi!');
+    });
+}
+
+function showPromo() {
+    if (!userData) {
+        alert('❌ Iltimos, avval profilingizni yuklang!');
+        return;
+    }
+    const code = prompt('Promokodni kiriting:');
+    if (!code) return;
+    
+    fetch('/api/promo', {
+        method: 'POST',
+        headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify({ 
+            user_id: userData.user_id,
+            code: code.toUpperCase() 
+        })
+    })
+    .then(res => res.json())
+    .then(data => {
+        if (data.success) {
+            userData.coins = data.coins;
+            userData.exp = data.exp;
+            updateUI(userData);
+            saveToLocalStorage(userData);
+            alert(`✅ Promokod aktivlashtirildi! +${formatNumber(data.added_coins)} 🪙, +${formatNumber(data.added_exp)} ⭐`);
+        } else {
+            alert('❌ Xatolik: ' + data.error);
+        }
+    })
+    .catch(err => {
+        console.error('Error:', err);
+        alert('❌ Xatolik yuz berdi!');
+    });
+}
+
+// ==================== LEADERBOARD ====================
+
+let currentLeaderboardType = 'current';
+
+function setupLeaderboard() {
+    document.querySelectorAll('.lb-tab-btn').forEach(btn => {
+        btn.addEventListener('click', () => {
+            document.querySelectorAll('.lb-tab-btn').forEach(b => b.classList.remove('active'));
+            btn.classList.add('active');
+            currentLeaderboardType = btn.dataset.lb;
+            loadLeaderboard();
+        });
+    });
+    
+    loadLeaderboard();
+}
+
+function loadLeaderboard() {
+    const endpoint = currentLeaderboardType === 'current' 
+        ? '/api/leaderboard/current' 
+        : '/api/leaderboard/total';
+    
+    fetch(endpoint)
+        .then(res => res.json())
+        .then(data => {
+            const container = document.getElementById('leaderboardList');
+            container.innerHTML = '';
+            
+            if (!data || data.length === 0) {
+                container.innerHTML = '<p style="text-align:center;color:#888;padding:20px;">🏆 Hozircha hech kim yo\'q</p>';
+                return;
+            }
+            
+            data.forEach(item => {
+                const div = document.createElement('div');
+                div.className = 'lb-item';
+                if (item.user_id === userData?.user_id) {
+                    div.classList.add('lb-self');
+                }
+                
+                let rankClass = '';
+                if (item.rank === 1) rankClass = 'gold';
+                else if (item.rank === 2) rankClass = 'silver';
+                else if (item.rank === 3) rankClass = 'bronze';
+                
+                const rankDisplay = item.rank <= 3 ? '🏆' : `#${item.rank}`;
+                
+                let valueDisplay = '';
+                if (currentLeaderboardType === 'current') {
+                    valueDisplay = `🪙 ${formatNumber(item.coins)}`;
+                } else {
+                    valueDisplay = `🖱️ ${formatNumber(item.clicks || item.total_clicks)}`;
+                }
+                
+                div.innerHTML = `
+                    <div class="lb-rank ${rankClass}">${rankDisplay}</div>
+                    <div class="lb-info">
+                        <div class="lb-name">${item.name}</div>
+                        <div class="lb-details">📊 ${item.level}-daraja • ${valueDisplay}</div>
+                    </div>
+                    <div class="lb-value">${valueDisplay}</div>
+                `;
+                container.appendChild(div);
+            });
+        })
+        .catch(err => console.error('Error loading leaderboard:', err));
+    
+    // Load user rank
+    if (userData) {
+        fetch(`/api/leaderboard/rank?user_id=${userData.user_id}`)
+            .then(res => res.json())
+            .then(data => {
+                const rankContainer = document.getElementById('leaderboardRank');
+                if (data.current_rank && data.total_rank) {
+                    rankContainer.innerHTML = `
+                        <p style="color:#888;font-size:12px;">👤 Sizning o'rningiz</p>
+                        <div style="display:flex;justify-content:center;gap:20px;margin-top:4px;">
+                            <div>
+                                <div class="rank-number">#${data.current_rank}</div>
+                                <div style="font-size:10px;color:#888;">💰 Hozirgi</div>
+                            </div>
+                            <div>
+                                <div class="rank-number">#${data.total_rank}</div>
+                                <div style="font-size:10px;color:#888;">📈 Umumiy</div>
+                            </div>
+                        </div>
+                    `;
+                } else {
+                    rankContainer.innerHTML = `
+                        <p style="color:#888;font-size:12px;">👤 Siz hali reytingda yo'qsiz</p>
+                    `;
+                }
+            })
+            .catch(() => {});
+    }
+}
+
+// ==================== CHAT ====================
+
+function setupChat() {
+    const input = document.getElementById('chatInput');
+    input.addEventListener('keypress', (e) => {
+        if (e.key === 'Enter') sendMessage();
+    });
+}
+
+function sendMessage() {
+    const input = document.getElementById('chatInput');
+    const text = input.value.trim();
+    if (!text) {
+        alert('❌ Iltimos, xabar yozing!');
+        return;
+    }
+    if (!isConnected) {
+        alert('❌ Chatga ulanish yo\'q! Qayta urining...');
+        return;
+    }
+    if (!userData) {
+        alert('❌ Foydalanuvchi ma\'lumotlari topilmadi!');
+        return;
+    }
+    
+    ws.send(JSON.stringify({
+        type: 'chat',
+        user_id: userData.user_id,
+        message: text
+    }));
+    
+    input.value = '';
+}
+
+function addChatMessage(data) {
+    const container = document.getElementById('chatMessages');
+    const msgDiv = document.createElement('div');
+    msgDiv.className = 'chat-message';
+    
+    if (data.user_id === userData?.user_id) {
+        msgDiv.classList.add('own');
+    }
+    
+    const userSpan = document.createElement('div');
+    userSpan.className = 'message-user';
+    const name = data.username || data.first_name || 'Foydalanuvchi';
+    const displayName = name.length > 20 ? name.substring(0, 17) + '...' : name;
+    userSpan.innerHTML = `<span style="color: ${data.color || '#00ff88'}">${data.title || '🟢'}</span> ${displayName}`;
+    
+    const textSpan = document.createElement('div');
+    textSpan.className = 'message-text';
+    textSpan.textContent = data.message;
+    
+    const timeSpan = document.createElement('div');
+    timeSpan.className = 'message-time';
+    try {
+        const date = new Date(data.time);
+        timeSpan.textContent = date.toLocaleTimeString();
+    } catch {
+        timeSpan.textContent = new Date().toLocaleTimeString();
+    }
+    
+    msgDiv.appendChild(userSpan);
+    msgDiv.appendChild(textSpan);
+    msgDiv.appendChild(timeSpan);
+    container.appendChild(msgDiv);
+    container.scrollTop = container.scrollHeight;
+    
+    while (container.children.length > 100) {
+        container.removeChild(container.firstChild);
+    }
+}
+
+// ==================== WEBSOCKET ====================
+
+function setupWebSocket() {
+    const protocol = window.location.protocol === 'https:' ? 'wss:' : 'ws:';
+    const wsUrl = `${protocol}//${window.location.host}/ws`;
+    console.log('Connecting to WebSocket:', wsUrl);
+    
+    ws = new WebSocket(wsUrl);
+    
+    ws.onopen = () => {
+        console.log('WebSocket connected');
+        isConnected = true;
+        if (userData) {
+            ws.send(JSON.stringify({
+                type: 'auth',
+                user_id: userData.user_id
+            }));
+        }
+    };
+    
+    ws.onmessage = (event) => {
+        try {
+            const data = JSON.parse(event.data);
+            if (data.type === 'chat') {
+                addChatMessage(data);
+            } else if (data.type === 'system') {
+                console.log('System message:', data.message);
+            }
+        } catch (e) {
+            console.error('WebSocket message error:', e);
+        }
+    };
+    
+    ws.onclose = () => {
+        console.log('WebSocket disconnected');
+        isConnected = false;
+        setTimeout(setupWebSocket, 3000);
+    };
+    
+    ws.onerror = (error) => {
+        console.error('WebSocket error:', error);
+    };
+}
+
+// ==================== AUCTION ====================
+
+function createAuction() {
+    if (!userData) {
+        alert('❌ Iltimos, avval profilingizni yuklang!');
+        return;
+    }
+    
+    const name = prompt('📦 Auktsion nomi:');
+    if (!name || name.trim() === '') return;
+    
+    const desc = prompt('📝 Tavsif:');
+    if (!desc || desc.trim() === '') return;
+    
+    const price = parseInt(prompt('💰 Boshlang\'ich narx:'));
+    if (!price || price <= 0) {
+        alert('❌ Narx 0 dan katta bo\'lishi kerak!');
+        return;
+    }
+    
+    if (price > userData.coins) {
+        alert(`❌ Yetarli tanga yo'q! Sizda: ${formatNumber(userData.coins)}`);
+        return;
+    }
+    
+    const duration = parseInt(prompt('⏰ Davomiyligi (daqiqa):'));
+    if (!duration || duration <= 0) {
+        alert('❌ Davomiylik 0 dan katta bo\'lishi kerak!');
+        return;
+    }
+    
+    fetch('/api/auction/create', {
+        method: 'POST',
+        headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify({ 
+            user_id: userData.user_id,
+            name: name.trim(), 
+            desc: desc.trim(), 
+            price: price, 
+            duration: duration 
+        })
+    })
+    .then(res => res.json())
+    .then(data => {
+        if (data.success) {
+            userData.coins = data.coins;
+            updateUI(userData);
+            saveToLocalStorage(userData);
+            alert(data.message || '✅ Auktsion yaratildi!');
+            refreshAuctions();
+            document.querySelector('[data-tab="auction"]').click();
+        } else {
+            alert('❌ Xatolik: ' + data.error);
+        }
+    })
+    .catch(err => {
+        console.error('Error creating auction:', err);
+        alert('❌ Xatolik yuz berdi!');
+    });
+}
+
+function refreshAuctions() {
+    fetch('/api/auctions')
+        .then(res => res.json())
+        .then(data => {
+            const container = document.getElementById('auctionList');
+            container.innerHTML = '';
+            
+            if (!data || data.length === 0) {
+                container.innerHTML = '<p style="text-align:center;color:#888;padding:20px;">🔨 Hozircha faol auktsionlar yo\'q</p>';
+                return;
+            }
+            
+            data.forEach(item => {
+                const div = document.createElement('div');
+                div.className = 'auction-item';
+                const timeLeft = getTimeLeft(item.end_time);
+                div.innerHTML = `
+                    <h4>📦 ${item.item_name}</h4>
+                    <p>${item.item_description}</p>
+                    <p>💰 Joriy narx: ${formatNumber(item.current_bid || item.start_price)} 🪙</p>
+                    <p>👤 Yaratuvchi: ${item.creator_name || item.creator_id}</p>
+                    <p>⏰ ${timeLeft}</p>
+                    <button onclick="placeBid(${item.id})">💰 Taklif qilish</button>
+                `;
+                container.appendChild(div);
+            });
+        })
+        .catch(err => console.error('Error loading auctions:', err));
+}
+
+function getTimeLeft(endTime) {
+    const end = new Date(endTime);
+    const now = new Date();
+    const diff = end - now;
+    
+    if (diff <= 0) return '⏰ Tugagan';
+    
+    const minutes = Math.floor(diff / 60000);
+    const seconds = Math.floor((diff % 60000) / 1000);
+    
+    if (minutes > 60) {
+        const hours = Math.floor(minutes / 60);
+        return `⏰ ${hours} soat ${minutes % 60} daqiqa`;
+    }
+    return `⏰ ${minutes} daqiqa ${seconds} soniya`;
+}
+
+function placeBid(auctionId) {
+    if (!userData) {
+        alert('❌ Iltimos, avval profilingizni yuklang!');
+        return;
+    }
+    const amount = parseInt(prompt('💰 Taklif miqdori:'));
+    if (!amount || amount <= 0) {
+        alert('❌ Taklif 0 dan katta bo\'lishi kerak!');
+        return;
+    }
+    
+    if (amount > userData.coins) {
+        alert(`❌ Yetarli tanga yo'q! Sizda: ${formatNumber(userData.coins)}`);
+        return;
+    }
+    
+    fetch('/api/auction/bid', {
+        method: 'POST',
+        headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify({ 
+            user_id: userData.user_id,
+            auction_id: auctionId, 
+            amount: amount 
+        })
+    })
+    .then(res => res.json())
+    .then(data => {
+        if (data.success) {
+            userData.coins = data.coins;
+            updateUI(userData);
+            saveToLocalStorage(userData);
+            alert(data.message || '✅ Taklif qabul qilindi!');
+            refreshAuctions();
+        } else {
+            alert('❌ Xatolik: ' + data.error);
+        }
+    })
+    .catch(err => {
+        console.error('Error placing bid:', err);
+        alert('❌ Xatolik yuz berdi!');
+    });
+}
+
+// ==================== ADMIN ====================
+
+function setupAdmin() {
+    document.getElementById('adminSearchInput').addEventListener('keypress', (e) => {
+        if (e.key === 'Enter') adminSearchUsers();
+    });
+}
+
+function adminSearchUsers() {
+    const input = document.getElementById('adminSearchInput');
+    const query = input.value.trim();
+    
+    if (!query || query.length < 2) {
+        alert('❌ Iltimos, kamida 2 ta harf kiriting!');
+        return;
+    }
+    
+    if (!userData) {
+        alert('❌ Foydalanuvchi ma\'lumotlari topilmadi!');
+        return;
+    }
+    
+    fetch('/api/admin/search', {
+        method: 'POST',
+        headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify({
+            user_id: userData.user_id,
+            query: query
+        })
+    })
+    .then(res => res.json())
+    .then(data => {
+        if (data.error) {
+            alert('❌ Xatolik: ' + data.error);
+            return;
+        }
+        
+        adminUsers = data.users || [];
+        renderAdminUsers();
+        
+        document.getElementById('adminPagination').innerHTML = `
+            <span style="color:#888;font-size:12px;">
+                Qidiruv natijasi: ${adminUsers.length} ta foydalanuvchi
+            </span>
+        `;
+    })
+    .catch(err => {
+        console.error('Error searching users:', err);
+        alert('❌ Xatolik yuz berdi!');
+    });
+}
+
+function adminLoadAllUsers() {
+    if (!userData) {
+        alert('❌ Foydalanuvchi ma\'lumotlari topilmadi!');
+        return;
+    }
+    
+    const offset = adminCurrentPage * ADMIN_USERS_PER_PAGE;
+    
+    fetch(`/api/admin/users?user_id=${userData.user_id}&limit=${ADMIN_USERS_PER_PAGE}&offset=${offset}`)
+        .then(res => res.json())
+        .then(data => {
+            if (data.error) {
+                alert('❌ Xatolik: ' + data.error);
+                return;
+            }
+            
+            adminUsers = data.users || [];
+            renderAdminUsers();
+            
+            const total = data.total || 0;
+            const totalPages = Math.ceil(total / ADMIN_USERS_PER_PAGE);
+            document.getElementById('adminPagination').innerHTML = `
+                <span style="color:#888;font-size:12px;">
+                    Sahifa ${adminCurrentPage + 1} / ${totalPages || 1} (Jami: ${total} foydalanuvchi)
+                </span>
+                <div style="display:flex;gap:4px;margin-top:4px;justify-content:center;">
+                    <button onclick="adminPrevPage()" ${adminCurrentPage <= 0 ? 'disabled' : ''} 
+                            style="padding:4px 12px;border:none;border-radius:4px;background:#2a2a2a;color:#fff;cursor:pointer;">
+                        ⬅️
+                    </button>
+                    <button onclick="adminNextPage()" ${adminCurrentPage >= totalPages - 1 ? 'disabled' : ''}
+                            style="padding:4px 12px;border:none;border-radius:4px;background:#2a2a2a;color:#fff;cursor:pointer;">
+                        ➡️
+                    </button>
+                </div>
+            `;
+        })
+        .catch(err => {
+            console.error('Error loading users:', err);
+            alert('❌ Xatolik yuz berdi!');
+        });
+}
+
+function adminPrevPage() {
+    if (adminCurrentPage > 0) {
+        adminCurrentPage--;
+        adminLoadAllUsers();
+    }
+}
+
+function adminNextPage() {
+    adminCurrentPage++;
+    adminLoadAllUsers();
+}
+
+function renderAdminUsers() {
+    const container = document.getElementById('adminUserList');
+    
+    if (!adminUsers || adminUsers.length === 0) {
+        container.innerHTML = '<p style="text-align:center;color:#888;padding:20px;">👤 Hech qanday foydalanuvchi topilmadi</p>';
+        return;
+    }
+    
+    container.innerHTML = '';
+    
+    adminUsers.forEach(user => {
+        const div = document.createElement('div');
+        div.className = 'admin-user-item';
+        
+        const name = user.first_name || user.username || `ID:${user.user_id}`;
+        
+        div.innerHTML = `
+            <div class="admin-user-info">
+                <div class="admin-user-name">${name}</div>
+                <div class="admin-user-details">
+                    🆔 ${user.user_id} • 📊 ${user.level || 1}-daraja • 🪙 ${formatNumber(user.coins || 0)} • 🖱️ ${formatNumber(user.total_clicks || 0)}
+                </div>
+            </div>
+            <div class="admin-user-actions">
+                <button class="btn-coins" onclick="adminAddCoins(${user.user_id})">+🪙</button>
+                <button class="btn-exp" onclick="adminAddExp(${user.user_id})">+⭐</button>
+                <button class="btn-energy" onclick="adminAddEnergy(${user.user_id})">+⚡</button>
+            </div>
+        `;
+        container.appendChild(div);
+    });
+}
+
+function adminAddCoins(userId) {
+    const amount = parseInt(prompt(`🪙 ${userId} ga nechta tanga qo'shmoqchisiz?`));
+    if (!amount || amount <= 0) return;
+    
+    if (!userData) {
+        alert('❌ Foydalanuvchi ma\'lumotlari topilmadi!');
+        return;
+    }
+    
+    fetch('/api/admin/add_coins', {
+        method: 'POST',
+        headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify({
+            admin_id: userData.user_id,
+            target_id: userId,
+            amount: amount
+        })
+    })
+    .then(res => res.json())
+    .then(data => {
+        if (data.success) {
+            alert(data.message);
+            const query = document.getElementById('adminSearchInput').value.trim();
+            if (query) {
+                adminSearchUsers();
+            } else {
+                adminLoadAllUsers();
+            }
+        } else {
+            alert('❌ Xatolik: ' + data.error);
+        }
+    })
+    .catch(err => {
+        console.error('Error adding coins:', err);
+        alert('❌ Xatolik yuz berdi!');
+    });
+}
+
+function adminAddExp(userId) {
+    const amount = parseInt(prompt(`⭐ ${userId} ga nechta EXP qo'shmoqchisiz?`));
+    if (!amount || amount <= 0) return;
+    
+    if (!userData) {
+        alert('❌ Foydalanuvchi ma\'lumotlari topilmadi!');
+        return;
+    }
+    
+    fetch('/api/admin/add_exp', {
+        method: 'POST',
+        headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify({
+            admin_id: userData.user_id,
+            target_id: userId,
+            amount: amount
+        })
+    })
+    .then(res => res.json())
+    .then(data => {
+        if (data.success) {
+            alert(data.message);
+            const query = document.getElementById('adminSearchInput').value.trim();
+            if (query) {
+                adminSearchUsers();
+            } else {
+                adminLoadAllUsers();
+            }
+        } else {
+            alert('❌ Xatolik: ' + data.error);
+        }
+    })
+    .catch(err => {
+        console.error('Error adding exp:', err);
+        alert('❌ Xatolik yuz berdi!');
+    });
+}
+
+function adminAddEnergy(userId) {
+    const amount = parseInt(prompt(`⚡ ${userId} ga nechta energiya qo'shmoqchisiz?`));
+    if (!amount || amount <= 0) return;
+    
+    if (!userData) {
+        alert('❌ Foydalanuvchi ma\'lumotlari topilmadi!');
+        return;
+    }
+    
+    fetch('/api/admin/add_energy', {
+        method: 'POST',
+        headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify({
+            admin_id: userData.user_id,
+            target_id: userId,
+            amount: amount
+        })
+    })
+    .then(res => res.json())
+    .then(data => {
+        if (data.success) {
+            alert(data.message);
+            const query = document.getElementById('adminSearchInput').value.trim();
+            if (query) {
+                adminSearchUsers();
+            } else {
+                adminLoadAllUsers();
+            }
+        } else {
+            alert('❌ Xatolik: ' + data.error);
+        }
+    })
+    .catch(err => {
+        console.error('Error adding energy:', err);
+        alert('❌ Xatolik yuz berdi!');
+    });
+}
+
+// ==================== AUTO REFRESH ====================
+
+setInterval(() => {
+    if (document.getElementById('tab-auction').classList.contains('active')) {
+        refreshAuctions();
+    }
+}, 30000);
+
+setInterval(() => {
+    if (userData) {
+        fetch(`/api/user?user_id=${userData.user_id}`)
+            .then(res => res.json())
+            .then(data => {
+                if (!data.error) {
+                    userData.energy = data.energy;
+                    userData.max_energy = data.max_energy;
+                    updateUI(userData);
+                    saveToLocalStorage(userData);
+                }
+            })
+            .catch(err => console.error('Error refreshing energy:', err));
+    }
+}, 10000);
+
+setInterval(() => {
+    if (document.getElementById('tab-leaderboard').classList.contains('active')) {
+        loadLeaderboard();
+    }
+}, 60000);
